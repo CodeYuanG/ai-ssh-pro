@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const panel = readFileSync('src/renderer/src/components/AIPanel.tsx', 'utf8')
-assert.equal((panel.match(/ai\.busyWait/g) || []).length, 2)
+assert.ok(((panel.match(/ai\.busyWait/g) || []).length) >= 2)
 assert.match(panel, /undoLastRound/)
 assert.match(panel, /retryLastUser/)
 

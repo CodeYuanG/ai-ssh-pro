@@ -2533,12 +2533,12 @@ fieldset.settings-row > label { display: inline-flex; align-items: center; gap: 
 }
 .ai-card-streaming .ai-stream-partial {
   margin: 0;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
-  font-size: var(--fs-sm);
-  line-height: 1.45;
-  max-height: 9em;
-  overflow: auto;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  max-height: none;
+  overflow: visible;
 }
 .ai-card-streaming .ai-stream-stop {
   flex: 0 0 auto;

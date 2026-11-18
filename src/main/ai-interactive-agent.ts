@@ -3,6 +3,7 @@ import { mt } from './main-i18n'
 import { aiHttpErrorMessages } from '../shared/ai-http-error'
 import type { WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { z } from 'zod'
 import {
   parseAiAssistantReply,
@@ -84,9 +85,14 @@ import {
   type OutputView
 } from './core-a-output-truncate'
 
+/** Per-async-run id stamped onto every stream event for concurrent multi-session chats. */
+const emitRunStore = new AsyncLocalStorage<{ runId: string }>()
+
 function send(wc: WebContents, ev: AiStreamEvent): void {
-  if (!wc.isDestroyed()) wc.send('ai:stream', ev)
-  if (ev.type === 'debug') forwardDebugPayloadToWindow(ev.payload)
+  const runId = emitRunStore.getStore()?.runId
+  const payload: AiStreamEvent = runId ? { ...ev, runId } : ev
+  if (!wc.isDestroyed()) wc.send('ai:stream', payload)
+  if (payload.type === 'debug') forwardDebugPayloadToWindow(payload.payload)
 }
 
 const DEBUG_AI =
@@ -131,10 +137,14 @@ function truncate(s: string, max: number): string {
 
 type ConfirmOutcome = 'approve' | 'deny' | 'cancel'
 
-const confirmWaiters = new Map<string, { resolve: (outcome: ConfirmOutcome) => void; timer: NodeJS.Timeout }>()
+const confirmWaiters = new Map<
+  string,
+  { resolve: (outcome: ConfirmOutcome) => void; timer: NodeJS.Timeout; runId: string }
+>()
 
-type ActiveAiChat = { ac: AbortController; ctx: { userAborted: boolean } }
-let activeAiChat: ActiveAiChat | null = null
+type ActiveAiChat = { ac: AbortController; ctx: { userAborted: boolean }; runId: string }
+/** Concurrent multi-session: one entry per runId (no longer preempts other chats). */
+const activeAiChats = new Map<string, ActiveAiChat>()
 
 function settleConfirm(requestId: string, outcome: ConfirmOutcome): boolean {
   const rec = confirmWaiters.get(requestId)
@@ -145,12 +155,29 @@ function settleConfirm(requestId: string, outcome: ConfirmOutcome): boolean {
   return true
 }
 
-/** 停止当前一轮 AI 助手（中断模型请求、解除等待中的命令确认） */
-export function abortAiChat(): void {
-  const cur = activeAiChat
-  if (!cur) return
-  cur.ctx.userAborted = true
-  cur.ac.abort()
+function settleConfirmsForRun(runId: string): void {
+  for (const [requestId, rec] of [...confirmWaiters.entries()]) {
+    if (rec.runId === runId) settleConfirm(requestId, 'cancel')
+  }
+}
+
+/** 停止 AI 助手。传入 runId 只停该会话；省略则停全部。 */
+export function abortAiChat(runId?: string): void {
+  const id = typeof runId === 'string' ? runId.trim() : ''
+  if (id) {
+    const cur = activeAiChats.get(id)
+    if (!cur) return
+    cur.ctx.userAborted = true
+    cur.ac.abort()
+    activeAiChats.delete(id)
+    settleConfirmsForRun(id)
+    return
+  }
+  for (const [, cur] of activeAiChats) {
+    cur.ctx.userAborted = true
+    cur.ac.abort()
+  }
+  activeAiChats.clear()
   for (const [requestId] of [...confirmWaiters.entries()]) settleConfirm(requestId, 'cancel')
 }
 
@@ -180,14 +207,14 @@ export function cancelAiConfirmStep(requestId: string): boolean {
   return settleConfirm(requestId, 'cancel')
 }
 
-async function waitForAiConfirm(requestId: string): Promise<ConfirmOutcome> {
+async function waitForAiConfirm(requestId: string, runId: string): Promise<ConfirmOutcome> {
   const timeout = confirmTimeoutMs()
   return await new Promise<ConfirmOutcome>((resolve) => {
     const timer = setTimeout(() => {
       confirmWaiters.delete(requestId)
       resolve('deny')
     }, timeout)
-    confirmWaiters.set(requestId, { resolve, timer })
+    confirmWaiters.set(requestId, { resolve, timer, runId })
   })
 }
 
@@ -923,13 +950,12 @@ export async function runOpenClawCoreAgentChat(
   const writtenRequestIds = new Set<string>()
   const inFlight = createInFlightBook()
 
-  if (activeAiChat) {
-    abortAiChat()
-  }
+  const runId = debugTurnId || randomUUID()
   const runCtx = { userAborted: false }
   const ac = new AbortController()
-  activeAiChat = { ac, ctx: runCtx }
+  activeAiChats.set(runId, { ac, ctx: runCtx, runId })
 
+  return await emitRunStore.run({ runId }, async () => {
   let prevSnapFingerprint: string | null = null
   let sameSnapshotRepeat = 0
   let consecutiveSnapshotTools = 0
@@ -1407,7 +1433,7 @@ export async function runOpenClawCoreAgentChat(
           return
         }
 
-        const decision = await waitForAiConfirm(requestId)
+        const decision = await waitForAiConfirm(requestId, runId)
         if (decision === 'cancel' || runCtx.userAborted) {
           // Cancel drops the proposal and returns to planning. Deny stays cancelled.
           hitl = cancelHitl(hitl)
@@ -1913,8 +1939,9 @@ export async function runOpenClawCoreAgentChat(
     } catch {
       /* persistence must not hide the original chat error */
     }
-    if (activeAiChat?.ac === ac) activeAiChat = null
+    if (activeAiChats.get(runId)?.ac === ac) activeAiChats.delete(runId)
   }
+  })
 }
 
 // Backward-compatible alias for older import sites.

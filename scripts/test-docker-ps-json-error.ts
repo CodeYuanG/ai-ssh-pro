@@ -1,9 +1,16 @@
 /**
  * Regression: Tauri briefly treated missing SSH exit status as failure and put
  * raw `docker ps --format json` NDJSON into containersError (red blob under 容器).
+ * Also: missing compose CLI is an empty group, not a red bash line.
  */
 import assert from 'node:assert/strict'
-import { humanizeDockerError, toolboxDockerList } from '../src/shared/docker-toolbox'
+import { readFileSync } from 'node:fs'
+import {
+  composeGroupError,
+  dockerComposeUnavailable,
+  humanizeDockerError,
+  toolboxDockerList
+} from '../src/shared/docker-toolbox'
 import type { DockerTreeResult } from '../src/shared/ipc'
 
 const rawJson =
@@ -51,5 +58,28 @@ assert.equal(ok.failed, false)
 const aloneOk = ok.groups.find((g) => g.id === 'standalone')
 assert.ok(aloneOk && aloneOk.rows.length === 1)
 assert.equal(aloneOk!.error, undefined)
+
+assert.equal(dockerComposeUnavailable('bash: line 1: docker-compose: command not found'), true)
+assert.equal(dockerComposeUnavailable("docker: 'compose' is not a docker command"), true)
+assert.equal(dockerComposeUnavailable('permission denied while listing projects'), false)
+assert.equal(composeGroupError('bash: line 1: docker-compose: command not found'), undefined)
+assert.equal(composeGroupError('permission denied while listing projects'), 'permission denied while listing projects')
+
+const noCompose: DockerTreeResult = {
+  containers: [],
+  composeProjects: [],
+  swarm: { active: false, manager: false, stacks: [] },
+  composeError: 'bash: line 1: docker-compose: command not found'
+}
+const noComposeModel = toolboxDockerList(noCompose)
+const noComposeGroup = noComposeModel.groups.find((g) => g.id === 'compose')
+assert.ok(noComposeGroup)
+assert.equal(noComposeGroup!.error, undefined)
+assert.equal(noComposeGroup!.count, 0)
+assert.equal(noComposeModel.empty, true)
+
+const branch = readFileSync('src/renderer/src/components/SessionDockerBranch.tsx', 'utf8')
+assert.match(branch, /composeGroupError/)
+assert.doesNotMatch(branch, /tree\.data\.composeError \?/)
 
 console.log('test-docker-ps-json-error: ok')

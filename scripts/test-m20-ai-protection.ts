@@ -98,7 +98,13 @@ assert.ok(hti.includes('readonlyActive(guardForSession(origin).level, guardForSe
 
 // ---- (3) stream scoped per conversation ----
 const submit = panel.slice(panel.indexOf('const submitToAi = useCallback'), panel.indexOf('const send = useCallback'))
-assert.ok(submit.includes('turnRef.current = turn') && submit.includes('const applyTurn = ') && submit.includes('const onScreen = () => persistKeyRef.current === turn.key'))
+assert.ok(
+  (submit.includes('turnRef.current = turn') || submit.includes('turnsByKeyRef.current.set')) &&
+    submit.includes('const applyTurn = ') &&
+    submit.includes('const onScreen = () => persistKeyRef.current === turn.key')
+)
+assert.ok(submit.includes('evRun') || submit.includes('runId'), 'stream events filtered by runId')
+assert.ok(panel.includes('busyKeys') && panel.includes('setSessionBusy'), 'per-conversation busy')
 const stream = submit.slice(submit.indexOf('window.aiss.ai.onStream'))
 assert.equal(/\bsetLines\(/.test(stream), false, 'stream updates go through applyTurn')
 assert.equal(/\bsetPendingConfirm\(/.test(stream), false, 'confirm dock follows the turn')

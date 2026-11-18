@@ -534,7 +534,13 @@ export type AiChatPayload = {
   }
 }
 
-export type AiStreamEvent =
+type AiStreamRunMeta = {
+  /** Concurrent multi-session: renderer ignores events for other runs. */
+  runId?: string
+  historyKey?: string
+}
+
+export type AiStreamEvent = (
   | { type: 'delta'; text: string }
   | { type: 'status'; text: string }
   | {
@@ -565,6 +571,7 @@ export type AiStreamEvent =
   | { type: 'audit'; payload: AiAuditPayload }
   /** 2.3: a command finished (or was blocked); the renderer attaches it to the matching step for replay. */
   | { type: 'exec'; requestId?: string; command: string; payload: Omit<import('./ai-exec-replay').ExecRecord, 'auditId'> }
+) & AiStreamRunMeta
 
 export type AiAuditPayload = {
   command: string

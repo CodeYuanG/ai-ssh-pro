@@ -220,6 +220,7 @@ assert.equal(toolboxDockerList(denied).failure.includes('permission denied'), tr
 const composeOnly = box({ composeError: "docker: 'compose' is not a docker command" })
 assert.equal(dockerDaemonMissing(composeOnly), false)
 assert.equal(toolboxDockerList(composeOnly).empty, true)
+assert.equal(toolboxDockerList(composeOnly).groups.find((g) => g.id === 'compose')?.error, undefined)
 
 assert.equal(dockerActionNeedsConfirm('rm'), true)
 assert.equal(dockerActionNeedsConfirm('compose-down'), true)

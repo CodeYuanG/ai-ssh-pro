@@ -10,7 +10,7 @@ import type {
   SavedSessionProfile
 } from '@shared/ipc'
 import { normalizeQuery, profileMatches } from '../lib/session-filter'
-import { dockerStatusTone, type DockerStatusTone } from '@shared/docker-toolbox'
+import { composeGroupError, dockerStatusTone, type DockerStatusTone } from '@shared/docker-toolbox'
 import { hostStatusLevel, type HostProbeResult } from '@shared/host-status'
 import { effectiveLevel } from '@shared/protection'
 import { stricterLevel } from '@shared/readonly-session'
@@ -371,12 +371,21 @@ export default function SessionDockerBranch({
                 </button>
                 {showCompose ? (
                   <div className="session-docker-children">
-                    {tree.data.composeError ? (
-                      <div className="session-docker-msg session-docker-msg--error">{tree.data.composeError}</div>
-                    ) : view.projects.length === 0 ? (
-                      <div className="session-docker-msg">{searching ? tg('db.noMatchProjects') : tg('db.noProjects')}</div>
-                    ) : (
-                      view.projects.map((p) => {
+                    {(() => {
+                      const composeErr = composeGroupError(tree.data.composeError)
+                      if (composeErr) {
+                        return (
+                          <div className="session-docker-msg session-docker-msg--error">{composeErr}</div>
+                        )
+                      }
+                      if (view.projects.length === 0) {
+                        return (
+                          <div className="session-docker-msg">
+                            {searching ? tg('db.noMatchProjects') : tg('db.noProjects')}
+                          </div>
+                        )
+                      }
+                      return view.projects.map((p) => {
                         const tone = toneFromStatus(undefined, p.status)
                         const open = searching || isComposeProjectExpanded(p.name)
                         return (
@@ -432,7 +441,7 @@ export default function SessionDockerBranch({
                           </div>
                         )
                       })
-                    )}
+                    })()}
                   </div>
                 ) : null}
               </div>

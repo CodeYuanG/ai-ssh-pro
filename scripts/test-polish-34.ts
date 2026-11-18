@@ -31,6 +31,8 @@ for (const k of order) {
 assert.ok(composer.includes('data-testid="safety-scope"') && composer.includes('data-testid="safety-host"'), 'host policy lives in the safety popover (M21 dropped the session tier)')
 assert.ok(composer.includes('aria-pressed={includeTerminal'), 'attach output is a toggle chip')
 assert.ok(composer.includes('data-testid="ai-stop"') && composer.includes('onClick={stopGeneration}'), 'send turns into stop while busy')
+assert.ok(composer.includes('ai-stop-glyph'), 'stop uses a solid media-stop square, not Icon square')
+assert.ok(norm('src/renderer/src/styles.css').includes('.ai-stop-glyph'), 'stop glyph CSS present')
 assert.equal(ai.includes('className="ai-toolbar"'), false, 'old checkbox toolbar removed')
 assert.equal(ai.includes('type="checkbox"'), false)
 

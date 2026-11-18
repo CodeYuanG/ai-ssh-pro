@@ -501,10 +501,17 @@ async fn ai_chat(
 }
 
 #[tauri::command]
-fn ai_abort_chat(state: State<'_, AppState>) -> bool {
-    state.ai.abort();
-    state.agent.abort();
-    true
+fn ai_abort_chat(state: State<'_, AppState>, run_id: Option<String>) -> bool {
+    let id = run_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(rid) = id {
+        let a = state.ai.abort_run(rid);
+        let b = state.agent.abort_run(rid);
+        a || b
+    } else {
+        state.ai.abort_all();
+        state.agent.abort_all();
+        true
+    }
 }
 
 #[tauri::command]
@@ -1769,6 +1776,35 @@ fn core_memory_compress(session_key: String, piece: String, cursor: Option<Strin
 
 
 
+/// Status-bar RTT: one no-op exec on the live session (same contract as Electron `workspace:ping`).
+#[tauri::command]
+async fn workspace_ping(state: State<'_, AppState>, session_id: String) -> Result<Option<u64>, String> {
+    let id = session_id.trim();
+    if id.is_empty() || id.len() > 128 {
+        return Ok(None);
+    }
+    // Demo sessions are not wired in Tauri yet; keep a stable fake RTT so the chip is not stuck on —.
+    if id.starts_with("demo:") {
+        return Ok(Some(8 + (id.len() as u64 % 6)));
+    }
+    let started = std::time::Instant::now();
+    match state.ssh.exec(id, "true".into(), Some(5_000)).await {
+        Ok(raw) => {
+            let timed_out = raw.get("code").is_none()
+                && raw
+                    .get("stderr")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.contains("timeout"))
+                    .unwrap_or(false);
+            if timed_out {
+                return Ok(None);
+            }
+            Ok(Some(started.elapsed().as_millis() as u64))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
 #[tauri::command]
 async fn workspace_resources(state: State<'_, AppState>, session_id: String) -> Result<Value, String> {
     let raw = state
@@ -2090,6 +2126,7 @@ pub fn run() {
             core_memory_append_episode,
             core_memory_set_cite_hold,
             core_memory_compress,
+            workspace_ping,
             workspace_resources,
             forwards_restore,
             local_fs_hash,

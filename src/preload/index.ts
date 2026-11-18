@@ -373,7 +373,7 @@ const api = {
     testProvider: (req: AiProviderTestInput): Promise<AiProviderTestResult> =>
       ipcRenderer.invoke('ai:provider:test', req),
     chat: (payload: AiChatPayload): Promise<void> => ipcRenderer.invoke('ai:chat', payload),
-    abortChat: (): Promise<void> => ipcRenderer.invoke('ai:abortChat'),
+    abortChat: (runId?: string): Promise<void> => ipcRenderer.invoke('ai:abortChat', runId),
     confirmStep: (requestId: string, ok: boolean): Promise<boolean> =>
       ipcRenderer.invoke('ai:confirmStep', requestId, ok),
     /** M20: tell the main process the live protection of an SSH session (null clears it). */

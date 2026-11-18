@@ -49,10 +49,11 @@ export default function ExecReplay({
   onRetryWithEvidence?: (input: { command: string; evidence: string; exhausted: boolean }) => void
 }) {
   const { locale } = useI18n()
-  const [open, setOpen] = useState(false)
   const blocked = exec.status === 'blocked'
   const lines = exec.outputLines ?? 0
   const shown = exec.summary ? exec.summary.split('\n').length : 0
+  // Open when there is captured output so the user does not hunt behind 「输出 N 行」.
+  const [open, setOpen] = useState(() => Boolean(exec.summary?.trim()) && !blocked)
   const failureView = buildFailureEvidenceView(exec, command)
   const statusLabel = tg(`exec.status.${exec.status}` as 'exec.status.ok')
   // Round 23: when the failure pin owns the story, do not re-shout 「失败 · exit」.

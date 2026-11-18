@@ -43,6 +43,7 @@ import {
 import { safetyBandTone, safetyLadderBand } from '@shared/safety-visibility'
 import AiConfigCard from './AiConfigCard'
 import ExecReplay, { OPEN_AUDIT_EVENT, type OpenAiFromAuditDetail } from './ExecReplay'
+import ChatMarkdown from './ChatMarkdown'
 import { OPEN_AI_POLICY_EVENT, prodAutoHint } from '@shared/prod-auto-hint'
 import { readonlyHostHint } from '@shared/readonly-host-hint'
 import type { ExecRecord } from '@shared/ai-exec-replay'
@@ -411,7 +412,7 @@ function OpsReply({
   if (!structured) {
     return (
       <div className="ai-reply-desc">
-        <HighlightedText text={safeText} />
+        <ChatMarkdown markdown={safeText} />
       </div>
     )
   }
@@ -421,7 +422,7 @@ function OpsReply({
         if (block.kind === 'prose') {
           return (
             <div key={i} className="ai-reply-desc">
-              <HighlightedText text={block.text} />
+              <ChatMarkdown markdown={block.text} />
             </div>
           )
         }
@@ -491,6 +492,30 @@ function OpsReply({
       })}
     </div>
   )
+}
+
+type TurnState = {
+  id: string
+  key: string | null
+  host: string
+  lines: Line[]
+  pending: { requestId: string; action: AiAssistantReply['action'] } | null
+  stopped: boolean
+}
+
+/** Group consecutive assistant steps into one visual turn (Cursor-like transcript). */
+function groupChatTurns(lines: Line[]): Array<{ role: 'user' | 'assistant'; indices: number[] }> {
+  const groups: Array<{ role: 'user' | 'assistant'; indices: number[] }> = []
+  for (let i = 0; i < lines.length; i++) {
+    const role = lines[i].role
+    const last = groups[groups.length - 1]
+    if (last && last.role === 'assistant' && role === 'assistant') {
+      last.indices.push(i)
+    } else {
+      groups.push({ role, indices: [i] })
+    }
+  }
+  return groups
 }
 
 function resolveHistoryKey(historyKey: string | null | undefined, activeSessionId: string | null): string | null {
@@ -578,7 +603,12 @@ export default function AIPanel({
   // D94: long pastes collapse into blocks sent after the typed question
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
   const [openBlock, setOpenBlock] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  /** Screenshot/demo busy — OR'd with per-conversation busyKeys below. */
+  const [demoBusy, setBusy] = useState(false)
+  /** Conversations currently generating (keyed by historyKey). Multiple sessions can run in parallel. */
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set())
+  const earlyPersistKey = resolveHistoryKey(historyKey, activeSessionId)
+  const busy = demoBusy || busyKeys.has((earlyPersistKey ?? '').trim())
   /** 2.2/R16: planner run progress in the composer ("step n / limit"; streak only under auto). */
   const [runProgress, setRunProgress] = useState<{
     step: number
@@ -1401,18 +1431,25 @@ export default function AIPanel({
   const persistKeyRef = useRef(persistKey)
   persistKeyRef.current = persistKey
   /**
-   * M20: the in-flight turn is bound to the conversation it started in. Stream events for it
-   * update that conversation only; if the user switched tabs mid-reply they are kept (and
-   * persisted) off-screen instead of landing in the conversation now on screen.
+   * M20 + multi-session: each conversation can have its own in-flight turn. Stream events
+   * are filtered by runId so parallel sessions do not cross-paint.
    */
-  const turnRef = useRef<{
-    key: string | null
-    host: string
-    lines: Line[]
-    pending: { requestId: string; action: AiAssistantReply['action'] } | null
-    stopped: boolean
-  } | null>(null)
+  const turnsByKeyRef = useRef(new Map<string, TurnState>())
+  /** Last touched turn for the on-screen key (tests / stop). */
+  const turnRef = useRef<TurnState | null>(null)
   const [turnElsewhere, setTurnElsewhere] = useState<{ key: string | null; host: string } | null>(null)
+
+  const setSessionBusy = useCallback((key: string | null | undefined, on: boolean) => {
+    const k = (key ?? '').trim()
+    setBusyKeys((prev) => {
+      const has = prev.has(k)
+      if (on === has) return prev
+      const next = new Set(prev)
+      if (on) next.add(k)
+      else next.delete(k)
+      return next
+    })
+  }, [])
 
   const activeProvider = providers.find((p) => p.id === activeProviderId) ?? providers[0]
   const modelList = activeProvider?.modelList ?? []
@@ -1522,15 +1559,21 @@ export default function AIPanel({
     let cancelled = false
     // Keep screenshot/demo pending dock across history reloads.
     if (!screenshotForceKeyRef.current) setPendingConfirm(null)
-    const turn = turnRef.current
-    if (turn && turn.key !== persistKey) {
-      // Left the conversation mid-reply: keep what it has so far under its own key.
-      if (turn.key) void window.aiss.ai.setChatHistory(turn.key, linesToHistoryMessages(turn.lines))
-      setTurnElsewhere({ key: turn.key, host: turn.host })
-    } else {
-      setTurnElsewhere(null)
+    const map = turnsByKeyRef.current
+    const curKey = (persistKey ?? '').trim()
+    const turn = map.get(curKey) ?? null
+    turnRef.current = turn
+    // Banner: another conversation is still generating off-screen.
+    let elsewhere: { key: string | null; host: string } | null = null
+    for (const [k, t] of map) {
+      if (k !== curKey && !t.stopped) {
+        elsewhere = { key: t.key, host: t.host }
+        if (t.key) void window.aiss.ai.setChatHistory(t.key, linesToHistoryMessages(t.lines))
+        break
+      }
     }
-    if (turn && turn.key === persistKey) {
+    setTurnElsewhere(elsewhere)
+    if (turn) {
       setLines(turn.lines.slice())
       if (turn.pending) setPendingConfirm(turn.pending)
       return
@@ -1645,22 +1688,36 @@ export default function AIPanel({
     async (text: string, terminalExcerpt?: string) => {
       const userLine: UserLine = { role: 'user', content: text }
       releaseSessionInFlight(persistKey)
-      const turn = {
+      const debugTurnId = crypto.randomUUID()
+      const mapKey = (persistKey ?? '').trim()
+      const turn: TurnState = {
+        id: debugTurnId,
         key: persistKey,
         host: conversation ? conversationLabel(conversation.hostLabel, conversation.n) : hostName || inventoryLookup?.host || '',
         lines: [...linesRef.current, userLine],
-        pending: null as { requestId: string; action: AiAssistantReply['action'] } | null,
+        pending: null,
         stopped: false
       }
+      turnsByKeyRef.current.set(mapKey, turn)
       turnRef.current = turn
-      setTurnElsewhere(null)
+      // Keep banner if other sessions are still running.
+      {
+        let elsewhere: { key: string | null; host: string } | null = null
+        for (const [k, t] of turnsByKeyRef.current) {
+          if (k !== mapKey && !t.stopped) {
+            elsewhere = { key: t.key, host: t.host }
+            break
+          }
+        }
+        setTurnElsewhere(elsewhere)
+      }
       const onScreen = () => persistKeyRef.current === turn.key
       /** Apply an update to this turn's conversation, on screen or off. */
       const applyTurn = (fn: (prev: Line[]) => Line[]) => {
         // H04: Stop marks the turn stopped — ignore late deltas entirely.
         if (turn.stopped) return
-        // H04/H05: once a newer turn owns turnRef, do not paint into the live transcript.
-        const live = turnRef.current === turn
+        // Only the registered turn for this conversation may paint live.
+        const live = turnsByKeyRef.current.get(mapKey) === turn
         if (live && onScreen()) {
           setLines((prev) => {
             const next = fn(prev)
@@ -1680,7 +1737,7 @@ export default function AIPanel({
         if (onScreen()) setPendingConfirm(p)
       }
       setLines(turn.lines)
-      setBusy(true)
+      setSessionBusy(persistKey, true)
       setPendingConfirm(null)
 
       // H06: always read live transcript from linesRef (post new-chat / restore), not a stale closure.
@@ -1692,7 +1749,6 @@ export default function AIPanel({
         { role: 'user', content: text }
       ]
 
-      const debugTurnId = crypto.randomUUID()
       const turnStarted = Date.now()
 
       let usedStepProtocol = false
@@ -1700,6 +1756,9 @@ export default function AIPanel({
       // 2.3: audit id per command, attached to the replay record when the exec event arrives
       const auditIds = new Map<string, string>()
       const unsub = window.aiss.ai.onStream((ev) => {
+      const evRun = (ev as { runId?: string }).runId?.trim()
+      if (evRun && evRun !== turn.id) return
+      if (!evRun && turnsByKeyRef.current.size > 1) return
       if (ev.type === 'exec') {
         const rec: ExecRecord = { ...ev.payload, ...(auditIds.get(ev.command) ? { auditId: auditIds.get(ev.command) } : {}) }
         applyTurn((prev) => {
@@ -1741,14 +1800,16 @@ export default function AIPanel({
       }
       if (ev.type === 'progress') {
         // R16: ask/suggest/auto all show plan step n/max; streak chip stays auto-only in the UI.
-        setRunProgress({
-          step: ev.step,
-          max: ev.maxSteps,
-          policy: ev.policy,
-          streak: ev.autoStreak,
-          streakCap: ev.autoStreakCap,
-          forced: ev.forcedConfirm === true
-        })
+        if (onScreen()) {
+          setRunProgress({
+            step: ev.step,
+            max: ev.maxSteps,
+            policy: ev.policy,
+            streak: ev.autoStreak,
+            streakCap: ev.autoStreakCap,
+            forced: ev.forcedConfirm === true
+          })
+        }
         return
       }
       if (ev.type === 'status') {
@@ -1763,17 +1824,35 @@ export default function AIPanel({
       }
       if (ev.type === 'step') {
         usedStepProtocol = true
-        const raw = ev.structured as AiAssistantReply & { message?: string; summary?: string }
+        const raw = ev.structured as AiAssistantReply & {
+          message?: string
+          summary?: string
+          tool?: string
+          toolName?: string
+          name?: string
+        }
+        const toolName = String(raw.toolName || raw.tool || raw.name || '').trim()
         const description = String(
-          raw.description || raw.message || raw.summary || ''
+          raw.description ||
+            raw.message ||
+            raw.summary ||
+            (raw.action === 'tool_call'
+              ? !toolName || toolName === 'get_terminal_snapshot'
+                ? tg('ux64.toolAutoSnapshot')
+                : toolName
+              : raw.command || '')
         )
-        const s: AiAssistantReply = { ...raw, description }
+        const s: AiAssistantReply = {
+          ...raw,
+          description,
+          ...(toolName ? { toolName } : {})
+        }
         applyTurn((prev) => {
           const next = [...prev]
           const last = next[next.length - 1]
           const row: AssistantLine = {
             role: 'assistant',
-            content: description,
+            content: description || (toolName ? toolName : tg('ai.noReply')),
             streaming: false,
             structured: s,
             requestId: ev.requestId,
@@ -1821,10 +1900,12 @@ export default function AIPanel({
           return next
         })
         // H05: free the composer immediately; do not wait for chat() finally.
-        if (turnRef.current === turn) {
-          setBusy(false)
-          setRunProgress(null)
-          queueMicrotask(() => inputRef.current?.focus())
+        if (turnsByKeyRef.current.get(mapKey) === turn) {
+          setSessionBusy(persistKey, false)
+          if (onScreen()) {
+            setRunProgress(null)
+            queueMicrotask(() => inputRef.current?.focus())
+          }
         }
         return
       }
@@ -1853,6 +1934,9 @@ export default function AIPanel({
     })
 
     try {
+      // Tauri listen() is async — wait so status/step/delta are not dropped before subscribe.
+      const streamReady = (unsub as { ready?: Promise<void> }).ready
+      if (streamReady) await streamReady
       await window.aiss.ai.chat({
         messages: history,
         targetSessionId: activeSessionId ?? undefined,
@@ -1906,6 +1990,23 @@ export default function AIPanel({
           return next
         })
       }
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err ?? '')
+      const fe = friendlyError(raw)
+      applyTurn((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        const row: AssistantLine = {
+          role: 'assistant',
+          content: fe.message || tg('pf5.aiFail'),
+          detail: fe.detail && fe.detail !== fe.message ? fe.detail : undefined,
+          variant: 'error',
+          errorCode: fe.code
+        }
+        if (last?.role === 'assistant' && last.streaming) next[next.length - 1] = row
+        else next.push(row)
+        return next
+      })
     } finally {
       unsub()
       const elapsedMs = Date.now() - turnStarted
@@ -1917,22 +2018,37 @@ export default function AIPanel({
         return next
       })
       // H05: only clear busy for this turn — a quick retry after Stop must keep its busy flag.
-      if (turnRef.current === turn) {
-        setBusy(false)
-        setRunProgress(null)
-        setTurnPending(null)
-        turnRef.current = null
+      if (turnsByKeyRef.current.get(mapKey) === turn) {
+        turnsByKeyRef.current.delete(mapKey)
+        setSessionBusy(persistKey, false)
+        if (onScreen()) {
+          setRunProgress(null)
+          setTurnPending(null)
+          turnRef.current = null
+        }
       }
       refreshWorkingGoal(persistKey)
       // Persist user + assistant text after the turn completes — under the turn's own key.
       queueMicrotask(() => {
         persistTurn(turn.lines)
+        if (turnsByKeyRef.current.get(mapKey) === turn) {
+          turnsByKeyRef.current.delete(mapKey)
+        }
         if (turnRef.current === turn) turnRef.current = null
-        setTurnElsewhere(null)
+        // Refresh elsewhere banner from remaining runs.
+        let elsewhere: { key: string | null; host: string } | null = null
+        const cur = (persistKeyRef.current ?? '').trim()
+        for (const [k, t] of turnsByKeyRef.current) {
+          if (k !== cur && !t.stopped) {
+            elsewhere = { key: t.key, host: t.host }
+            break
+          }
+        }
+        setTurnElsewhere(elsewhere)
       })
     }
   },
-    [activeSessionId, hostInventoryId, hostName, inventoryLookup, persistHistory, persistKey, production, refreshWorkingGoal]
+    [activeSessionId, hostInventoryId, hostName, inventoryLookup, persistHistory, persistKey, production, refreshWorkingGoal, setSessionBusy]
   )
 
   const send = useCallback(async () => {
@@ -2302,14 +2418,18 @@ export default function AIPanel({
   }, [])
 
   const stopGeneration = useCallback(() => {
-    void window.aiss.ai.abortChat()
+    const mapKey = (persistKeyRef.current ?? '').trim()
+    const cur = turnsByKeyRef.current.get(mapKey) ?? turnRef.current
+    // Abort only this conversation's run — other sessions keep generating.
+    void window.aiss.ai.abortChat(cur?.id)
     // H04: invalidate live turn on Stop so late deltas cannot reopen streaming.
-    const cur = turnRef.current
     if (cur) {
       cur.stopped = true
-      turnRef.current = null
+      turnsByKeyRef.current.delete(mapKey)
+      if (turnRef.current === cur) turnRef.current = null
     }
     // H05: unlock composer right away; finalize the card text locally.
+    setSessionBusy(persistKeyRef.current, false)
     setBusy(false)
     setRunProgress(null)
     setPendingConfirm(null)
@@ -2319,7 +2439,7 @@ export default function AIPanel({
       return next
     })
     queueMicrotask(() => inputRef.current?.focus())
-  }, [])
+  }, [setSessionBusy])
   // 2.2: Ctrl+Shift+Backspace (⌘⇧⌫ on macOS) stops the run from anywhere while the AI is working.
   useEffect(() => {
     if (!busy) return
@@ -3197,7 +3317,7 @@ export default function AIPanel({
         </div>
       ) : null}
 
-      <div className="ai-messages">
+      <div className="ai-messages" data-chat-ui="cursor">
         {lines.length === 0 && (
           <div className="ai-reply-empty" data-testid="ai-reply-empty" role="status">
             <p>{tg(
@@ -3284,18 +3404,28 @@ export default function AIPanel({
             </div>
           </div>
         )}
-        {lines.map((l, i) => {
+        {groupChatTurns(lines).map((turn, ti) => (
+          <div
+            key={`turn-${ti}-${turn.indices[0]}`}
+            className={`ai-turn ai-turn--${turn.role}`}
+            data-testid={turn.role === 'user' ? 'ai-turn-user' : 'ai-turn-assistant'}
+          >
+            {turn.indices.map((i) => {
+          const l = lines[i]
           if (l.role === 'user') {
             return (
               <div key={i} className="msg user" data-testid="ai-user-msg">
-                {l.content}
+                <div className="ai-msg-role" aria-hidden>
+                  {tg('ai.roleYou')}
+                </div>
+                <div className="ai-msg-body">{l.content}</div>
               </div>
             )
           }
           if (l.streaming) {
             const partial = (l.content || '').trim()
             return (
-              <div key={i} className="msg assistant ai-structured ai-dark-card ai-card-streaming" data-testid="ai-reply-card" data-card="streaming">
+              <div key={i} className="msg assistant ai-structured ai-card-streaming" data-testid="ai-reply-card" data-card="streaming">
                 <div className="ai-stream-head">
                   <span className="ai-stream-label">{tg('ux64.streaming')}</span>
                   <button
@@ -3310,10 +3440,12 @@ export default function AIPanel({
                   </button>
                 </div>
                 {partial ? (
-                  <pre className="ai-stream-partial" data-testid="ai-stream-partial">
-                    {partial}
-                  </pre>
-                ) : null}
+                  <div className="ai-stream-partial" data-testid="ai-stream-partial">
+                    <ChatMarkdown markdown={partial} streaming />
+                  </div>
+                ) : (
+                  <span className="ai-stream-pulse" aria-hidden />
+                )}
               </div>
             )
           }
@@ -3415,51 +3547,59 @@ export default function AIPanel({
           if (l.structured) {
             const s = l.structured
             const isConfirmable = Boolean(l.requestId && pendingConfirm?.requestId === l.requestId)
-            const isSnapshot = !s.toolName || s.toolName === 'get_terminal_snapshot'
+            const toolName = String(
+              (s as { toolName?: string; tool?: string }).toolName ||
+                (s as { tool?: string }).tool ||
+                ''
+            ).trim()
+            // Only the real terminal snapshot uses the quiet one-line strip.
+            // Missing toolName used to mark every memory step as a snapshot → hairline rows.
+            const isSnapshot = toolName === 'get_terminal_snapshot'
             if (s.action === 'tool_call' && !l.requestId) {
               const stepNo = suggestionStepNo.get(i)
+              const label = isSnapshot
+                ? tg('ux64.toolAutoSnapshot')
+                : String(s.description || l.content || toolName || '—').trim()
+              // Cursor-like: collapse tool noise; snapshot stays a quiet one-liner.
+              if (isSnapshot) {
+                return (
+                  <div
+                    key={i}
+                    className="msg assistant ai-structured ai-tool-strip"
+                    data-testid="ai-reply-card"
+                    data-card="tool"
+                    data-step={stepNo || undefined}
+                  >
+                    <span className="ai-tool-step">{label}</span>
+                  </div>
+                )
+              }
               return (
-                <div
+                <details
                   key={i}
-                  className={`msg assistant ai-structured ai-dark-card ai-tool-strip${isSnapshot ? '' : ' ai-tool-strip--plan'}`}
+                  className="msg assistant ai-structured ai-tool-strip ai-tool-strip--plan"
                   data-testid="ai-reply-card"
                   data-card="tool"
                   data-step={stepNo || undefined}
                 >
-                  {!isSnapshot && (stepNo || s.riskLevel) ? (
-                    <span className="ai-tool-meta" data-testid="ai-tool-meta">
-                      {stepNo ? (
-                        <span className="ai-step-index" data-testid="ai-step-index">
-                          {tg('ai.stepIndex', { n: stepNo })}
-                        </span>
-                      ) : null}
-                      {s.riskLevel ? <RiskBadge level={s.riskLevel} /> : null}
+                  <summary className="ai-tool-summary">
+                    {(stepNo || s.riskLevel) ? (
+                      <span className="ai-tool-meta" data-testid="ai-tool-meta">
+                        {stepNo ? (
+                          <span className="ai-step-index" data-testid="ai-step-index">
+                            {tg('ai.stepIndex', { n: stepNo })}
+                          </span>
+                        ) : null}
+                        {s.riskLevel ? <RiskBadge level={s.riskLevel} /> : null}
+                      </span>
+                    ) : null}
+                    <span className="ai-tool-step ai-tool-step--wrap">
+                      {toolName ? <code>{toolName}</code> : null}
+                      {toolName ? ' · ' : null}
+                      {label}
                     </span>
-                  ) : null}
-                  <span className={`ai-tool-step${isSnapshot ? '' : ' ai-tool-step--wrap'}`}>
-                    {isSnapshot ? (
-                      <>
-                        {tg('ux64.toolAutoSnapshot')}
-                        {s.toolName ? (
-                          <>
-                            {' '}
-                            <code>{s.toolName}</code>
-                          </>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <HighlightedText text={s.description} />
-                        {s.toolName ? (
-                          <>
-                            {' '}
-                            <code>{s.toolName}</code>
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </span>
-                </div>
+                  </summary>
+                </details>
               )
             }
             const card =
@@ -3508,7 +3648,7 @@ export default function AIPanel({
                 </div>
               ) : null}
               <div
-                className={`msg assistant ai-structured ai-dark-card${isConfirmable ? ' is-active-plan-step' : ''}${screenshotAuditFocusId && l.exec?.auditId === screenshotAuditFocusId ? ' is-audit-focus' : ''}`}
+                className={`msg assistant ai-structured${card === 'command' || isConfirmable ? ' ai-dark-card' : ' ai-card-soft'}${isConfirmable ? ' is-active-plan-step' : ''}${screenshotAuditFocusId && l.exec?.auditId === screenshotAuditFocusId ? ' is-audit-focus' : ''}`}
                 data-testid="ai-reply-card"
                 data-card={card}
                 data-confirm-id={l.requestId || undefined}
@@ -3517,6 +3657,11 @@ export default function AIPanel({
                 data-exec-command={s.command || undefined}
                 data-audit-focus={screenshotAuditFocusId && l.exec?.auditId === screenshotAuditFocusId ? '1' : undefined}
               >
+                {card === 'conclusion' ? (
+                  <div className="ai-msg-role" aria-hidden>
+                    {tg('ai.roleAssistant')}
+                  </div>
+                ) : null}
                 {isConfirmable ? (
                   <span
                     className="ai-active-plan-badge"
@@ -3684,8 +3829,11 @@ export default function AIPanel({
               </Fragment>
             )
           }
-          return (
-            <div key={i} className="msg assistant ai-structured ai-dark-card ai-card-plain" data-testid="ai-reply-card" data-card="plain">
+            return (
+              <div key={i} className="msg assistant ai-structured ai-card-plain" data-testid="ai-reply-card" data-card="plain">
+              <div className="ai-msg-role" aria-hidden>
+                {tg('ai.roleAssistant')}
+              </div>
               <OpsReply
                 text={l.content}
                 badge
@@ -3714,7 +3862,9 @@ export default function AIPanel({
               <ReplyMeta text={l.content} elapsedMs={l.elapsedMs} />
             </div>
           )
-        })}
+            })}
+          </div>
+        ))}
         <div ref={tailRef} />
       </div>
 
@@ -3889,8 +4039,8 @@ export default function AIPanel({
               setInputMenu({ x: e.clientX, y: e.clientY })
             }}
             onKeyDown={(e) => {
-              // P39: IME composition (pinyin) owns Enter / arrows; never send or recall mid-composition
-              if (e.nativeEvent.isComposing || e.keyCode === 229) return
+              // P39 / ime-safe-enter-submit: IME composition owns Enter; also keyCode 229 for Safari.
+              if (e.nativeEvent.isComposing || e.isComposing || e.keyCode === 229) return
               // D52: ↑ on an empty box (or while recalling) brings back earlier questions; ↓ walks forward
               if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
                 const ta = e.currentTarget
@@ -3903,10 +4053,10 @@ export default function AIPanel({
                   return
                 }
               }
-              // 聊天输入：默认按 Enter 发送；按 Shift+Enter 换行。
+              // Enter 发送；Shift+Enter 换行（与 Cursor 一致）。
               if (e.key === 'Enter' && !e.shiftKey) {
-                recallRef.current = -1
                 e.preventDefault()
+                recallRef.current = -1
                 void send()
               }
             }}
@@ -4169,7 +4319,8 @@ export default function AIPanel({
                 aria-label={tg('ai.stop')}
                 onClick={stopGeneration}
               >
-                <Icon name="square" size={12} />
+                {/* Media-stop: solid square (stroke Icon "square" reads as a hollow block at 12px). */}
+                <span className="ai-stop-glyph" aria-hidden />
               </button>
             ) : (
               <Button

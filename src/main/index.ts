@@ -1202,8 +1202,8 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('ai:abortChat', () => {
-    abortAiChat()
+  ipcMain.handle('ai:abortChat', (_e, runId?: string) => {
+    abortAiChat(typeof runId === 'string' ? runId : undefined)
   })
 
   ipcMain.on('ai:protection:set', (_event, sessionId: string, protection: { level?: unknown; elevated?: unknown } | null) => {

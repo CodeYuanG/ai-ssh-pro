@@ -12,14 +12,19 @@ import { type TerminalPrefs } from '@shared/ipc'
 
 type AnyFn = (...args: any[]) => any
 
-function unsubListen(p: Promise<UnlistenFn>): () => void {
+type StreamUnsub = (() => void) & { ready: Promise<void> }
+
+function unsubListen(p: Promise<UnlistenFn>): StreamUnsub {
   let u: UnlistenFn | null = null
-  void p.then((fn) => {
+  const ready = p.then((fn) => {
     u = fn
   })
-  return () => {
+  const stop = (() => {
     if (u) u()
-  }
+  }) as StreamUnsub
+  // AIPanel awaits this before ai.chat so early ai:stream events are not missed.
+  stop.ready = ready
+  return stop
 }
 
 async function notImpl(name: string): Promise<never> {
@@ -352,8 +357,8 @@ export async function installTauriBridge(): Promise<void> {
       },
       setSettings: (s: unknown) => invoke('store_set', { path: ['ai'], value: s }),
       chat: (payload: unknown) => invoke('ai_chat', { payload }),
-      abortChat: async () => {
-        await invoke('ai_abort_chat')
+      abortChat: async (runId?: string) => {
+        await invoke('ai_abort_chat', { runId: runId ?? null })
       },
       parseSsh: (text: string) => invoke('ai_parse_ssh', { text }),
       assist: (req: unknown) => invoke('ai_assist', { req }),
@@ -447,7 +452,7 @@ export async function installTauriBridge(): Promise<void> {
           return Array.isArray(all[key]) ? all[key] : []
         }
       },
-      onStream: (cb: AnyFn) =>
+      onStream: (cb: AnyFn): StreamUnsub =>
         unsubListen(
           listen('ai:stream', (e) => {
             cb(e.payload)
@@ -474,7 +479,7 @@ export async function installTauriBridge(): Promise<void> {
       import: (raw: unknown) => invoke('backup_import', { raw })
     },
     workspace: {
-      ping: async () => null,
+      ping: (sessionId: string) => invoke<number | null>('workspace_ping', { sessionId }),
       probeHosts: async () => [],
       batchExec: (payload: unknown) => invoke('workspace_batch_exec', { payload }),
       resources: (sessionId: string) => invoke('workspace_resources', { sessionId }),

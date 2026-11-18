@@ -96,6 +96,25 @@ export function swarmPortBadge(ports: DockerSwarmPort[]): string {
 const MISSING_DOCKER =
   /command not found|no such file or directory|cannot connect to the docker daemon|is the docker daemon running|executable file not found/i
 
+/** Plugin/binary absent — empty Compose group, not a red bash dump in the tree. */
+const MISSING_COMPOSE =
+  /command not found|no such file or directory|executable file not found|is not a docker command|unknown command[\s'"`]*compose|['"]compose['"] is not/i
+
+/**
+ * `docker compose` / `docker-compose` not installed.
+ * Docker itself may still work; the sidebar should show the quiet empty line.
+ */
+export function dockerComposeUnavailable(err?: string): boolean {
+  if (!err) return false
+  return MISSING_COMPOSE.test(err.trim())
+}
+
+/** Error text for a Compose group; `undefined` means show the empty state instead. */
+export function composeGroupError(err?: string): string | undefined {
+  if (!err || dockerComposeUnavailable(err)) return undefined
+  return humanizeDockerError(err)
+}
+
 function hasMaterial(tree: DockerTreeResult): boolean {
   if (tree.containers.length > 0) return true
   if (tree.composeProjects.length > 0) return true
@@ -352,7 +371,7 @@ export function toolboxDockerList(tree: DockerTreeResult, query = ''): ToolboxDo
   const compose: ToolboxDockerGroup = {
     id: 'compose',
     rows: composeRows(projects),
-    error: tree.composeError,
+    error: composeGroupError(tree.composeError),
     count: 0
   }
   compose.count = groupCount('compose', compose.rows)

@@ -8,6 +8,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+/// Removes a chat run id when the async chat future drops (success, error, or cancel).
+struct RunCleanup<'a> {
+    runs: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+    inflight: &'a Mutex<usize>,
+    run_id: String,
+}
+
+impl Drop for RunCleanup<'_> {
+    fn drop(&mut self) {
+        self.runs.lock().remove(&self.run_id);
+        let mut n = self.inflight.lock();
+        *n = n.saturating_sub(1);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatMessage {
@@ -22,6 +37,36 @@ pub struct AiChatPayload {
     pub target_session_id: Option<String>,
     pub terminal_excerpt: Option<String>,
     pub debug_turn_id: Option<String>,
+    /// Stable conversation key — used to tag stream events for concurrent multi-session runs.
+    #[serde(default)]
+    pub history_key: Option<String>,
+}
+
+/// Tag every `ai:stream` event so concurrent sessions can filter by run.
+pub fn emit_ai_stream(
+    app: &AppHandle,
+    run_id: &str,
+    history_key: Option<&str>,
+    mut body: Value,
+) {
+    if let Some(obj) = body.as_object_mut() {
+        if !run_id.is_empty() {
+            obj.insert("runId".into(), json!(run_id));
+        }
+        if let Some(hk) = history_key.map(str::trim).filter(|s| !s.is_empty()) {
+            obj.insert("historyKey".into(), json!(hk));
+        }
+    }
+    let _ = app.emit("ai:stream", body);
+}
+
+pub fn resolve_run_id(payload: &AiChatPayload) -> String {
+    payload
+        .debug_turn_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,22 +108,39 @@ pub struct AiSettings {
 }
 
 pub struct AiRuntime {
-    abort: AtomicBool,
+    runs: Mutex<HashMap<String, Arc<AtomicBool>>>,
     assist_abort: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    inflight: Mutex<Option<()>>,
+    inflight: Mutex<usize>,
 }
 
 impl AiRuntime {
     pub fn new() -> Self {
         Self {
-            abort: AtomicBool::new(false),
+            runs: Mutex::new(HashMap::new()),
             assist_abort: Mutex::new(HashMap::new()),
-            inflight: Mutex::new(None),
+            inflight: Mutex::new(0),
         }
     }
 
+    pub fn abort_all(&self) {
+        let mut map = self.runs.lock();
+        for (_, flag) in map.drain() {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+
+    pub fn abort_run(&self, run_id: &str) -> bool {
+        if let Some(flag) = self.runs.lock().get(run_id) {
+            flag.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Backward-compatible alias used by older call sites.
     pub fn abort(&self) {
-        self.abort.store(true, Ordering::SeqCst);
+        self.abort_all();
     }
 
     pub fn abort_assist(&self, request_id: &str) {
@@ -93,8 +155,16 @@ impl AiRuntime {
         settings: AiSettings,
         payload: AiChatPayload,
     ) -> Result<()> {
-        self.abort.store(false, Ordering::SeqCst);
-        *self.inflight.lock() = Some(());
+        let run_id = resolve_run_id(&payload);
+        let history_key = payload.history_key.clone();
+        let abort = Arc::new(AtomicBool::new(false));
+        self.runs.lock().insert(run_id.clone(), abort.clone());
+        *self.inflight.lock() += 1;
+        let _guard = RunCleanup {
+            runs: &self.runs,
+            inflight: &self.inflight,
+            run_id: run_id.clone(),
+        };
 
         let provider = settings
             .providers
@@ -106,8 +176,10 @@ impl AiRuntime {
 
         let api_key = provider.api_key.trim().to_string();
         if api_key.is_empty() {
-            let _ = app.emit(
-                "ai:stream",
+            emit_ai_stream(
+                &app,
+                &run_id,
+                history_key.as_deref(),
                 json!({ "type": "error", "message": "请先在设置中填写 API Key" }),
             );
             return Ok(());
@@ -169,8 +241,10 @@ impl AiRuntime {
         {
             Ok(r) => r,
             Err(e) => {
-                let _ = app.emit(
-                    "ai:stream",
+                emit_ai_stream(
+                    &app,
+                    &run_id,
+                    history_key.as_deref(),
                     json!({ "type": "error", "message": e.to_string() }),
                 );
                 return Ok(());
@@ -181,8 +255,10 @@ impl AiRuntime {
             let status = res.status().as_u16();
             let t = res.text().await.unwrap_or_default();
             let preview = if t.len() > 300 { &t[..300] } else { &t };
-            let _ = app.emit(
-                "ai:stream",
+            emit_ai_stream(
+                &app,
+                &run_id,
+                history_key.as_deref(),
                 json!({
                     "type": "error",
                     "message": format!("HTTP {status}: {preview}")
@@ -197,15 +273,17 @@ impl AiRuntime {
         let mut cancelled = false;
 
         while let Some(item) = stream.next().await {
-            if self.abort.load(Ordering::SeqCst) {
+            if abort.load(Ordering::SeqCst) {
                 cancelled = true;
                 break;
             }
             let chunk = match item {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = app.emit(
-                        "ai:stream",
+                    emit_ai_stream(
+                        &app,
+                        &run_id,
+                        history_key.as_deref(),
                         json!({ "type": "error", "message": e.to_string() }),
                     );
                     return Ok(());
@@ -224,8 +302,12 @@ impl AiRuntime {
                 }
                 let data = s[5..].trim();
                 if data == "[DONE]" {
-                    let _ = app.emit("ai:stream", json!({ "type": "done" }));
-                    *self.inflight.lock() = None;
+                    emit_ai_stream(
+                        &app,
+                        &run_id,
+                        history_key.as_deref(),
+                        json!({ "type": "done" }),
+                    );
                     return Ok(());
                 }
                 if let Ok(v) = serde_json::from_str::<Value>(data) {
@@ -234,8 +316,10 @@ impl AiRuntime {
                         .and_then(|x| x.as_str())
                     {
                         if !piece.is_empty() {
-                            let _ = app.emit(
-                                "ai:stream",
+                            emit_ai_stream(
+                                &app,
+                                &run_id,
+                                history_key.as_deref(),
                                 json!({ "type": "delta", "text": piece }),
                             );
                         }
@@ -245,14 +329,20 @@ impl AiRuntime {
         }
 
         if cancelled {
-            let _ = app.emit(
-                "ai:stream",
+            emit_ai_stream(
+                &app,
+                &run_id,
+                history_key.as_deref(),
                 json!({ "type": "cancelled", "message": "aborted" }),
             );
         } else {
-            let _ = app.emit("ai:stream", json!({ "type": "done" }));
+            emit_ai_stream(
+                &app,
+                &run_id,
+                history_key.as_deref(),
+                json!({ "type": "done" }),
+            );
         }
-        *self.inflight.lock() = None;
         Ok(())
     }
 

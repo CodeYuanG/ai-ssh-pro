@@ -20,6 +20,14 @@ assert.match(app, /statusLatencyMs/)
 const i18n = readFileSync('src/renderer/src/lib/i18n.tsx', 'utf8')
 assert.ok(i18n.includes("'sb.latencyTip'"))
 
+const bridge = readFileSync('src/renderer/src/tauri-bridge.ts', 'utf8')
+assert.match(bridge, /workspace_ping/)
+assert.doesNotMatch(bridge, /ping:\s*async\s*\(\)\s*=>\s*null/)
+
+const rust = readFileSync('src-tauri/src/lib.rs', 'utf8')
+assert.match(rust, /async fn workspace_ping/)
+assert.match(rust, /workspace_ping,/)
+
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string; scripts: { test: string; 'test:parts'?: string } }
 assert.equal(pkg.version, '0.8.0')
 assert.match(pkg.scripts['test:parts'] || pkg.scripts.test, /test-statusbar-latency/)

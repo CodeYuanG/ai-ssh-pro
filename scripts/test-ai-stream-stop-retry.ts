@@ -23,10 +23,14 @@ import { applyStreamDelta, finalizeStoppedLines } from '../src/shared/ai-stream-
 
 const panel = readFileSync('src/renderer/src/components/AIPanel.tsx', 'utf8').replace(/\r\n/g, '\n')
 
-assert.ok(panel.includes('const live = turnRef.current === turn'), 'stale turns must not paint live transcript')
+assert.ok(
+  panel.includes('const live = turnRef.current === turn') ||
+    panel.includes('turnsByKeyRef.current.get(mapKey) === turn'),
+  'stale turns must not paint live transcript'
+)
 assert.ok(panel.includes('H05: free the composer immediately'), 'cancelled clears busy without waiting for finally')
 assert.ok(panel.includes('H05: only clear busy for this turn'), 'finally must not clear a newer turn busy')
-assert.ok(panel.includes('void window.aiss.ai.abortChat()'), 'stop aborts chat')
+assert.ok(/abortChat\(cur\?\.id\)/.test(panel) || panel.includes('void window.aiss.ai.abortChat()'), 'stop aborts chat')
 assert.ok(panel.includes('H04: invalidate live turn on Stop'), 'stop invalidates turn (H04)')
 assert.ok(/cur\.stopped\s*=\s*true/.test(panel), 'stop marks turn.stopped')
 assert.ok(panel.includes('unlock composer right away'), 'stop unlocks composer immediately')
@@ -59,7 +63,7 @@ assert.equal(shots.includes('createElement(\'button\')') && shots.includes("data
 assert.ok(!shots.includes("name: 'r6-h05-stop'"), 'old injected h05 scenario removed')
 
 const app = readFileSync('src/renderer/src/App.tsx', 'utf8')
-assert.ok(app.includes("detail.op === 'aiChat' || detail.op === 'aiStreaming'"))
+assert.ok(app.includes("detail.op === 'aiChat'") && app.includes("detail.op === 'aiStreaming'"))
 
 const i18n = readFileSync('src/renderer/src/lib/i18n.tsx', 'utf8')
 assert.ok(i18n.includes("'ai.cancelled':"))

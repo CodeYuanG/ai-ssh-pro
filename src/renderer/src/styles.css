@@ -6721,6 +6721,7 @@ button.primary.danger:focus-visible {
 .ai-panel .ai-messages {
   gap: var(--space-4);
   padding: var(--space-3);
+  scroll-padding-bottom: var(--space-4);
 }
 .ai-panel .msg.user {
   align-self: stretch;
@@ -6760,8 +6761,9 @@ button.primary.danger:focus-visible {
 
 .ai-panel .msg.assistant.ai-card-streaming,
 .ai-panel .msg.assistant.ai-tool-strip {
-  min-height: 0;
-  padding: 0;
+  /* Keep a readable row — padding:0 collapsed memory/tool steps into hairline dashes. */
+  min-height: 22px;
+  padding: 4px 0;
   font-size: var(--fs-sm);
   color: var(--color-text-muted);
 }
@@ -7417,6 +7419,13 @@ button.primary.danger:focus-visible {
   background: var(--color-text-primary);
   color: var(--color-bg-app);
 }
+.ai-panel .ai-composer .ai-composer-send.is-stop .ai-stop-glyph {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
 /* ~320px panel: the console chip drops its label (icon + tooltip stay) so the model name keeps room. */
 @container (max-width: 300px) {
   .ai-console-chip span {
@@ -7923,13 +7932,14 @@ button.primary.danger:focus-visible {
 }
 .ai-exec-output {
   margin: 0;
-  max-height: 160px;
+  max-height: 220px;
   overflow: auto;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   line-height: 1.5;
-  white-space: pre;
-  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
 }
 .ai-exec-note { line-height: 1.5; }
 .ai-exec-output + .ai-exec-note,
@@ -8404,4 +8414,238 @@ body.platform-darwin .window-controls {
     /* keep label; weight already demoted — do not compete with Agree fill */
     font-weight: var(--fw-regular);
   }
+}
+
+/* ==== Cursor-like AI chat transcript ==== */
+.ai-panel .ai-messages[data-chat-ui='cursor'] {
+  gap: 0;
+  padding: 16px 18px 28px;
+  scroll-padding-bottom: 24px;
+}
+
+.ai-panel .ai-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-panel .ai-turn--user {
+  margin-top: 18px;
+  align-items: flex-end;
+}
+
+.ai-panel .ai-turn--assistant {
+  margin-top: 10px;
+  align-items: stretch;
+}
+
+.ai-panel .ai-turn--user + .ai-turn--assistant {
+  margin-top: 8px;
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.user {
+  max-width: min(92%, 42rem);
+  padding: 10px 14px;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  border-radius: 16px 16px 4px 16px;
+  white-space: pre-wrap;
+}
+
+.ai-panel .ai-msg-role {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+  user-select: none;
+}
+
+.ai-panel .msg.user .ai-msg-role {
+  text-align: right;
+  color: color-mix(in srgb, var(--color-accent) 70%, var(--color-text-muted));
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.assistant.ai-structured {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 2px 6px;
+  border-radius: 0;
+  max-width: min(100%, 44rem);
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.assistant.ai-dark-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.assistant.ai-card-soft,
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.assistant.ai-card-plain,
+.ai-panel .ai-messages[data-chat-ui='cursor'] .msg.assistant.ai-card-streaming {
+  background: transparent;
+  border: 0;
+  padding: 2px 0 8px;
+}
+
+.ai-panel .ai-chat-md {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ai-panel .ai-chat-md > :first-child {
+  margin-top: 0;
+}
+
+.ai-panel .ai-chat-md > :last-child {
+  margin-bottom: 0;
+}
+
+.ai-panel .ai-chat-md p {
+  margin: 0 0 0.65em;
+}
+
+.ai-panel .ai-chat-md ul,
+.ai-panel .ai-chat-md ol {
+  margin: 0 0 0.65em;
+  padding-left: 1.35em;
+}
+
+.ai-panel .ai-chat-md li + li {
+  margin-top: 0.2em;
+}
+
+.ai-panel .ai-chat-md h1,
+.ai-panel .ai-chat-md h2,
+.ai-panel .ai-chat-md h3 {
+  margin: 0.85em 0 0.35em;
+  font-size: 1.05em;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.ai-panel .ai-chat-md-pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--color-bg-code);
+  border: 1px solid var(--color-border-muted);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ai-panel .ai-chat-md-table {
+  overflow: auto;
+  margin: 0.5em 0;
+}
+
+.ai-panel .ai-chat-md.is-streaming {
+  opacity: 0.95;
+}
+
+.ai-panel .ai-stream-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: ai-stream-pulse 1.1s ease-in-out infinite;
+  margin-top: 6px;
+}
+
+@keyframes ai-stream-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-panel .ai-stream-pulse { animation: none; opacity: 0.8; }
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .ai-tool-strip {
+  min-height: 0;
+  padding: 2px 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.ai-panel .ai-tool-strip--plan {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 2px 0 !important;
+}
+
+.ai-panel .ai-tool-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-text-muted);
+}
+
+.ai-panel .ai-tool-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-panel .ai-tool-summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid var(--color-text-muted);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  opacity: 0.7;
+  transition: transform 0.12s ease;
+}
+
+.ai-panel details.ai-tool-strip--plan[open] > .ai-tool-summary::before {
+  transform: rotate(90deg);
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .ai-reply-desc {
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ai-panel .ai-messages[data-chat-ui='cursor'] .ai-card-streaming .ai-stream-partial {
+  max-height: none;
+  font-size: 14px;
+  line-height: 1.65;
+  font-family: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.ai-panel .ai-input-row {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--color-border-muted);
+  background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
+}
+
+.ai-panel .ai-composer {
+  border-radius: 14px;
+  padding: 6px 6px 6px 4px;
+  background: var(--color-bg-elevated);
+}
+
+.ai-panel .ai-input-row .ai-composer textarea {
+  min-height: 64px;
+  font-size: 14px;
+  line-height: 1.5;
+  padding-top: 10px;
 }
