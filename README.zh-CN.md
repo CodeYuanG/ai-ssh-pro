@@ -2,7 +2,7 @@
 
 类 Xshell 的多会话 SSH 客户端，集成 AI 对话（Electron + TypeScript + React）。
 
-官网：**<https://codeyuang.github.io/ai-ssh-pro>**
+官网：**<http://121.196.45.81/ai-ssh-pro/>**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
