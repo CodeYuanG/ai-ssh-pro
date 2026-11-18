@@ -2,6 +2,8 @@
 
 类 Xshell 的多会话 SSH 客户端，集成 AI 对话。Windows 安装包不到 **10MB**。技术栈 TypeScript + React + Rust。
 
+官网 / Official site：**<https://guoshuaipeng.github.io/ai-ssh-pro>**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 > **Privacy:** SSH passwords, private keys, and LLM API keys are stored only on your machine
