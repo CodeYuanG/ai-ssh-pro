@@ -4,7 +4,7 @@
 
 ![封面：终端 + AI 助手](01-cover-ai-terminal.png)
 
-- 官网：https://guoshuaipeng.github.io/ai-ssh-pro/
+- 官网：http://121.196.45.81/ai-ssh-pro/
 - 下载：https://github.com/guoshuaipeng/ai-ssh-pro/releases
 - 开源协议：MIT
 
@@ -120,7 +120,7 @@ AI 面板常驻终端右侧，排障时不用切窗口。
 3. 安装后启动，可以先连内置的**演示主机**体验，数据全部模拟，不会连接真实服务器。
 4. 在 **设置 → AI** 填入你自己的模型 Provider（支持 OpenAI 兼容接口，如 DeepSeek、通义千问等）。
 
-更多介绍与使用说明见官网：https://guoshuaipeng.github.io/ai-ssh-pro/
+更多介绍与使用说明见官网：http://121.196.45.81/ai-ssh-pro/
 
 ---
 

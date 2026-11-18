@@ -2,7 +2,7 @@
 //! tauri-plugin-updater endpoints (signer pubkey configured) — see MIGRATION-TAURI.md.
 use serde_json::{json, Value};
 
-const SITE_LATEST: &str = "https://guoshuaipeng.github.io/ai-ssh-pro/latest.json";
+const SITE_LATEST: &str = "http://121.196.45.81/ai-ssh-pro/latest.json";
 const GITHUB_LATEST: &str =
     "https://api.github.com/repos/guoshuaipeng/ai-ssh-pro/releases/latest";
 const GITHUB_RELEASES: &str = "https://github.com/guoshuaipeng/ai-ssh-pro/releases";

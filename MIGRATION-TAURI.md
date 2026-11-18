@@ -228,7 +228,7 @@ npm run build:tauri
 | 公钥 | `%USERPROFILE%\.tauri\ai-ssh-pro.key.pub` → 已写入 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey` |
 | 密码 | 当前为空密码（靠文件 ACL 保护）。若要加密码：`cargo tauri signer generate -w %USERPROFILE%\.tauri\ai-ssh-pro.key -p YOUR_PASS -f`，签名时设 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
 | 插件 | `tauri-plugin-updater` + `bundle.createUpdaterArtifacts: true` + capability `updater:default` |
-| 端点（占位） | GitHub Releases `.../latest/download/latest.json`；Pages `.../updater/{{target}}/{{arch}}/{{current_version}}.json` |
+| 端点（占位） | GitHub Releases `.../latest/download/latest.json`；官网 `http://121.196.45.81/ai-ssh-pro/updater/{{target}}/{{arch}}/{{current_version}}.json`（该路径尚未发布） |
 
 ### 发布签名更新流程
 
