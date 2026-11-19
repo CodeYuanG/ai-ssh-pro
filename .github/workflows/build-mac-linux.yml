@@ -1,0 +1,106 @@
+name: Build macOS + Linux Tauri bundles
+
+# Builds Tauri installers on macOS (arm64 + x64) and Linux (AppImage + deb)
+# and uploads them to an existing GitHub Release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to upload assets to'
+        required: true
+        default: 'v0.8.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            bundles: dmg
+            arch: aarch64
+          - os: macos-13
+            bundles: dmg
+            arch: x64
+          - os: ubuntu-latest
+            bundles: appimage,deb
+            arch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri bundle (no Windows-only shortcut step)
+        shell: bash
+        run: |
+          set -e
+          BUNDLES_JSON=$(printf '%s' "${{ matrix.bundles }}" | python3 -c 'import sys,json; print(json.dumps([x.strip() for x in sys.stdin.read().split(",") if x.strip()]))')
+          printf '{"bundle":{"targets":%s}}\n' "$BUNDLES_JSON" > /tmp/tauri-bundle-config.json
+          cat /tmp/tauri-bundle-config.json
+          npx tauri build --config /tmp/tauri-bundle-config.json
+        env:
+          CI: true
+
+      - name: List produced bundles
+        run: find src-tauri/target/release/bundle -type f | sort
+
+      - name: Upload assets to ${{ github.event.inputs.tag }} Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -e
+          shopt -s nullglob
+          files=()
+          for f in \
+            src-tauri/target/release/bundle/dmg/*.dmg \
+            src-tauri/target/release/bundle/dmg/*.dmg.sig \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+            src-tauri/target/release/bundle/deb/*.deb \
+            src-tauri/target/release/bundle/deb/*.deb.sig; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No bundles found to upload"; exit 1
+          fi
+          printf 'Uploading %d files:\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            src-tauri/target/release/bundle/dmg/*
+            src-tauri/target/release/bundle/appimage/*
+            src-tauri/target/release/bundle/deb/*
