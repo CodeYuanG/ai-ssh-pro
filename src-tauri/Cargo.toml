@@ -1,6 +1,6 @@
 [package]
 name = "ai-ssh-pro"
-version = "0.8.0"
+version = "0.8.1"
 description = "AI-SSH-Pro"
 authors = ["guoshuaipeng"]
 edition = "2021"

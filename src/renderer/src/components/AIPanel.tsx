@@ -2807,7 +2807,7 @@ export default function AIPanel({
   // H07/R18: number consecutive command/tool suggestion cards; chip+badge share this map.
   const suggestionStepNo = useMemo(() => buildSuggestionStepNos(lines), [lines])
   const alignedPlan = useMemo(() => {
-    const confirmIdx = findConfirmableLineIndex(lines, pendingConfirm?.requestId)
+    const confirmIdx = findConfirmableLineIndex(lines as Array<{ requestId?: string }>, pendingConfirm?.requestId)
     const sugStep = confirmIdx >= 0 ? suggestionStepNo.get(confirmIdx) : undefined
     return alignPlanStepDisplay({
       runStep: runProgress?.step,
@@ -4040,7 +4040,7 @@ export default function AIPanel({
             }}
             onKeyDown={(e) => {
               // P39 / ime-safe-enter-submit: IME composition owns Enter; also keyCode 229 for Safari.
-              if (e.nativeEvent.isComposing || e.isComposing || e.keyCode === 229) return
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return
               // D52: ↑ on an empty box (or while recalling) brings back earlier questions; ↓ walks forward
               if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
                 const ta = e.currentTarget

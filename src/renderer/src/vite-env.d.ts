@@ -278,6 +278,10 @@ export type AissPreload = {
     chat: (payload: AiChatPayload) => Promise<void>
     abortChat: (runId?: string) => Promise<void>
     confirmStep: (requestId: string, ok: boolean) => Promise<boolean>
+    /** Electron alias retained by the Tauri bridge; same semantics as confirmStep. */
+    resolveConfirm?: (requestId: string, ok: boolean) => Promise<boolean>
+    /** Legacy alias retained by the Tauri bridge; same semantics as parseSshForm. */
+    parseSsh?: (text: string) => Promise<AiParsedSshForm>
     setSessionProtection?: (sessionId: string, protection: { level: 'normal' | 'production' | 'readonly'; elevated?: boolean } | null) => void
     assist: (req: AiAssistRequest) => Promise<AiAssistResult>
     abortAssist: (requestId: string) => Promise<void>

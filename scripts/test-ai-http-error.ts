@@ -10,7 +10,7 @@ import {
 import { isEngineerLeak } from '../src/shared/product-error.ts'
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string; scripts: { test: string; 'test:parts'?: string } }
-assert.equal(pkg.version, '0.8.0')
+assert.equal(pkg.version, '0.8.1')
 assert.match(pkg.scripts['test:parts'] || pkg.scripts.test, /test-ai-http-error/)
 
 assert.equal(parseAiHttpErrorMessage('HTTP 401: Invalid API key')?.status, 401)

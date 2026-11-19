@@ -3301,7 +3301,6 @@ export default function App() {
       {
         tabId,
         sessionId: '',
-        title,
         connectOpts: PLACEHOLDER_CONNECT,
         status: 'connected',
         view: 'audit',

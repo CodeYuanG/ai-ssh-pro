@@ -30,7 +30,9 @@ for (const f of files) {
   readFileSync(f, 'utf8')
     .split('\n')
     .forEach((line, i) => {
-      if (NATIVE.test(line)) hits.push(`${relative(root, f)}:${i + 1}: ${line.trim()}`)
+      // Ignore comments: prose like "the new confirm (…)" is not a native dialog call.
+      const code = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '')
+      if (NATIVE.test(code)) hits.push(`${relative(root, f)}:${i + 1}: ${line.trim()}`)
     })
 }
 assert.deepEqual(hits, [], `native dialogs found (use confirmDialog/promptDialog/toast):\n${hits.join('\n')}`)

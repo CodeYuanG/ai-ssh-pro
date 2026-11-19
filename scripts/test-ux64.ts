@@ -117,7 +117,7 @@ ok(!agent.includes('autoApproveLowRiskCommand'), 'agent has no low-risk auto-app
 ok(!agent.includes('低风险可自动批准'), 'planner prompt no longer offers auto-approve')
 ok(agent.includes('needsInterrupt ? randomUUID()'), 'every command step gets a confirm id')
 ok(agent.includes('actionNeedsHumanInterrupt(parsed.action, parsed.toolName)'), 'confirm id follows the interrupt helper')
-ok(agent.includes('await waitForAiConfirm(requestId)'), 'commands still wait for confirmation')
+ok(/await waitForAiConfirm\(requestId(?:\s*,\s*runId)?\)/.test(agent), 'commands still wait for confirmation')
 ok(agent.includes("toolName !== 'get_terminal_snapshot'"), 'snapshot tool path remains')
 
 ok(!form.includes('setAutoApproveLowRisk'), 'settings checkbox for auto-run is gone')

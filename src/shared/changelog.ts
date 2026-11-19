@@ -12,6 +12,24 @@ export type ChangelogEntry = {
 }
 
 export const CHANGELOG: Readonly<Record<string, ReadonlyArray<ChangelogEntry>>> = {
+  '0.8.1': [
+    {
+      icon: '✦',
+      text: {
+        zh: 'AI 对话支持多会话并行：每个终端标签页独立对话，停止只中断当前这一轮，切换标签页不再串台',
+        en: 'Parallel AI conversations: one conversation per terminal tab, Stop cancels only the current turn, and switching tabs no longer mixes streams'
+      },
+      where: { zh: 'AI 面板', en: 'AI panel' }
+    },
+    {
+      icon: '▷',
+      text: {
+        zh: '修复 Tauri 测连与 Electron 不一致、回复空文本异常、AI 对话不落盘、快速上手按钮换行及设置页对齐等细节',
+        en: 'Fixes for Tauri provider test parity, empty reply text, AI chat persistence, onboarding button layout and settings alignment'
+      },
+      where: { zh: '全局', en: 'Global' }
+    }
+  ],
   '0.8.0': [
     {
       icon: '✦',

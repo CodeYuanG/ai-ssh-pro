@@ -29,6 +29,6 @@ assert.match(rust, /async fn workspace_ping/)
 assert.match(rust, /workspace_ping,/)
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string; scripts: { test: string; 'test:parts'?: string } }
-assert.equal(pkg.version, '0.8.0')
+assert.equal(pkg.version, '0.8.1')
 assert.match(pkg.scripts['test:parts'] || pkg.scripts.test, /test-statusbar-latency/)
 console.log('test-statusbar-latency ok')

@@ -39,13 +39,28 @@ const SKIP = new Set(['AiDebugWindowApp.tsx'])
 const ALLOW = new Set(['简体中文', '中文'])
 const hits: string[] = []
 for (const f of readdirSync(dir).filter((n) => n.endsWith('.tsx') && !SKIP.has(n))) {
-  const sf = ts.createSourceFile(f, readFileSync(join(dir, f), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const source = readFileSync(join(dir, f), 'utf8')
+  const sf = ts.createSourceFile(f, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  // Screenshot-only fixture block in AIPanel is gated by screenshotHooksEnabled()
+  // and never rendered for real users; its Chinese demo strings are intentional.
+  const shotHandler =
+    f === 'AIPanel.tsx'
+      ? (() => {
+          const start = source.indexOf('const onShot = (ev: Event) => {')
+          const end = source.indexOf('window.addEventListener(SCREENSHOT_EVENT, onShot)', start)
+          return start >= 0 && end > start
+            ? { start: sf.getLineAndCharacterOfPosition(start).line, end: sf.getLineAndCharacterOfPosition(end).line }
+            : null
+        })()
+      : null
   const visit = (n: ts.Node) => {
     let text: string | null = null
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isJsxText(n)) text = n.text
     else if (ts.isTemplateExpression(n)) text = n.getText()
     if (text && RE.test(text) && !ALLOW.has(text.trim())) {
-      hits.push(`${f}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} ${text.trim().slice(0, 40)}`)
+      const line = sf.getLineAndCharacterOfPosition(n.getStart()).line
+      const inShot = shotHandler && line >= shotHandler.start && line <= shotHandler.end
+      if (!inShot) hits.push(`${f}:${line + 1} ${text.trim().slice(0, 40)}`)
     }
     ts.forEachChild(n, visit)
   }

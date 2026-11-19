@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.8.1
+
+Released 2026-11-19 (CST).
+
+**AI 对话与稳定性补丁 / AI chat and stability patch.**
+
+- **多会话并行对话 / Parallel AI conversations**：每个终端标签页独立对话，停止只中断当前这一轮，切换标签页不再串台。 One conversation per terminal tab; Stop cancels only the current turn; switching tabs no longer mixes streams.
+- **修复 / Fixes**：Tauri 测连与 Electron 对齐；回复文本空值防护；AI 每轮对话结束落盘（`queueMicrotask`）；快速上手按钮同行；设置页与终端表单对齐；窄列表与标签序号可读性。 Tauri provider test parity, empty-reply guard, AI chat persistence, onboarding layout, settings alignment, narrow-list readability.
+- **官网 / Site**：推广稿、更新端点与迁移文档统一指向阿里云自建站。 Promo copy, updater endpoint and migration docs point to the self-hosted site.
+
 ## v0.8.0
 
 Released 2026-11-04 (CST).
