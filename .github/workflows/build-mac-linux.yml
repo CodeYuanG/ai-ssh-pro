@@ -60,7 +60,7 @@ jobs:
         run: |
           set -e
           BUNDLES_JSON=$(printf '%s' "${{ matrix.bundles }}" | python3 -c 'import sys,json; print(json.dumps([x.strip() for x in sys.stdin.read().split(",") if x.strip()]))')
-          printf '{"bundle":{"targets":%s}}\n' "$BUNDLES_JSON" > /tmp/tauri-bundle-config.json
+          printf '{"bundle":{"targets":%s,"createUpdaterArtifacts":false}}\n' "$BUNDLES_JSON" > /tmp/tauri-bundle-config.json
           cat /tmp/tauri-bundle-config.json
           npx tauri build --config /tmp/tauri-bundle-config.json
         env:
