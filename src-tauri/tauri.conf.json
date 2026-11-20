@@ -53,8 +53,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZENjFDN0QyQkI3N0M0NjAKUldSZ3hIZTcwc2RoYllDZ2N4Tk1uYUFyMmRjdUt6WWVQV2JhcW1wSVBhWUUvN2Jzak1qKytBRjIK",
       "endpoints": [
-        "https://github.com/guoshuaipeng/ai-ssh-pro/releases/latest/download/latest.json",
-        "http://121.196.45.81/ai-ssh-pro/updater/{{target}}/{{arch}}/{{current_version}}.json"
+        "https://github.com/CodeYuanG/ai-ssh-pro/releases/latest/download/latest.json"
       ]
     }
   }
