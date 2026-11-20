@@ -9,6 +9,10 @@ on:
         description: 'Existing release tag to upload assets to'
         required: true
         default: 'v0.8.1'
+      target:
+        description: 'Which platform to build (all / mac-arm / mac-intel / linux)'
+        required: false
+        default: 'all'
 
 permissions:
   contents: write
@@ -22,14 +26,22 @@ jobs:
           - os: macos-latest
             bundles: dmg
             arch: aarch64
-          - os: macos-13
+            key: mac-arm
+          - os: macos-15-intel
             bundles: dmg
             arch: x64
+            key: mac-intel
           - os: ubuntu-latest
             bundles: appimage,deb
             arch: amd64
+            key: linux
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Skip matrix entries not selected by the target input.
+    if: >-
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == matrix.key ||
+      github.event.inputs.target == ''
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +109,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bundles-${{ matrix.os }}-${{ matrix.arch }}
+          name: bundles-${{ matrix.key }}
           if-no-files-found: ignore
           path: |
             src-tauri/target/release/bundle/dmg/*
