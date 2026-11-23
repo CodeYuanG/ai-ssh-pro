@@ -57,3 +57,11 @@ src-tauri/gen/
 .env.tauri-signing
 _updater_pubkey.txt
 
+# Local tooling copies (logs, DB configs, nested config repo)
+.dsh/
+dsh-config/
+
+# Local snapshots used while drafting the dual-product site
+site-v2/queqiao-src/
+site-v2/ra-src/
+
