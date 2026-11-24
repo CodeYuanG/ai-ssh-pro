@@ -285,20 +285,9 @@ export default function AlertWorkbenchTab({
     setLocateError(null)
     const target = locateTargetFor(alert.ruleId)
     const label = target.kind === 'toolbox' ? t(TARGET_KEY[target.tab]) : t('l2.openTerminal')
-    // UX-W06: an offline host cannot be live-inspected. Say so up front and
-    // make the action explicit instead of silently navigating and then showing
-    // a contradictory "navigated" badge.
-    const offline = !onlineIds.has(alert.hostKey) && target.kind !== 'terminal'
     try {
-      if (offline) {
-        setLocateError(t('l2.offlineHost'))
-        // Still open the view so the user can connect from there, but do not
-        // claim a successful live locate.
-        onLocate(alert)
-        markLoop(alert.id, 'locate')
-        window.dispatchEvent(new Event('aiss-loop-mark'))
-        return
-      }
+      // The app layer reconnects an offline saved host automatically, so this
+      // stays a single user action: connect (if needed) then open the view.
       onLocate(alert)
       markLoop(alert.id, 'locate')
       window.dispatchEvent(new Event('aiss-loop-mark'))
@@ -541,7 +530,7 @@ export default function AlertWorkbenchTab({
                 {t('l2.threshold', { n: selected.threshold })}
                 {selected.handledManually ? ` · ${t('l2.handledManually')}` : ''}
               </p>
-              {!online ? <div className="l2-warn">{t('l2.offlineHost')}</div> : null}
+              {!online ? <div className="l2-warn">{t('l2.offlineWillConnect')}</div> : null}
               {locateError ? (
                 <div className="l2-error" data-testid="l2-locate-error">
                   {t('l2.cantLocate', { reason: locateError })}
@@ -572,7 +561,7 @@ export default function AlertWorkbenchTab({
                 <Button variant="primary"
                   data-testid="l2-locate"
                   disabled={locating}
-                  title={selected && !onlineIds.has(selected.hostKey) ? t('l2.offlineHost') : undefined}
+                  title={selected && !onlineIds.has(selected.hostKey) ? t('l2.offlineWillConnect') : undefined}
                   onClick={() => doLocate(selected)}
                 >
                   {locating

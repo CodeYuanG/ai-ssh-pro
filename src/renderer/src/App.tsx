@@ -7688,6 +7688,7 @@ export default function App() {
 
   const locateAlert = useCallback((alert: FiredAlert) => {
     const target = locateTargetFor(alert.ruleId)
+    const targetTab = target.kind === 'toolbox' ? target.tab : 'terminal'
     const live = tabsRef.current.find(
       (t) => t.sessionId === alert.hostKey && t.status === 'connected' && (!t.view || t.view === 'session')
     )
@@ -7701,9 +7702,36 @@ export default function App() {
       showToast(tg('l2.opened', { target: `${targetLabel} · ${alert.hostTitle}` }))
       return
     }
-    pendingLocateRef.current = target.kind === 'toolbox' ? target.tab : 'terminal'
+    // Not connected: reconnect the saved host automatically instead of asking the
+    // user to pick it and come back. Falls back to the picker when the host is
+    // unknown (e.g. an ad-hoc quick-connect that was never saved).
+    const saved = profilesRef.current.find((p) => p.id === alert.hostKey)
+    if (saved) {
+      pendingLocateRef.current = targetTab
+      showToast(tg('l2.connecting', { host: saved.label?.trim() || saved.host }))
+      void (async () => {
+        const sid = await connectProfile(saved)
+        if (!sid) {
+          pendingLocateRef.current = null
+          showToast(lastConnectErrorRef.current || tg('ctx.seeError'))
+          return
+        }
+        // Give the session tab a beat to register before opening the target view.
+        await new Promise((r) => window.setTimeout(r, 120))
+        const pending = pendingLocateRef.current
+        pendingLocateRef.current = null
+        if (target.kind === 'toolbox') {
+          openToolTabRef.current('toolbox', sid, undefined, 0, pending && pending !== 'terminal' ? pending : undefined)
+        } else {
+          const tab = tabsRef.current.find((t) => t.sessionId === sid)
+          if (tab) setActiveTabId(tab.tabId)
+        }
+      })()
+      return
+    }
+    pendingLocateRef.current = targetTab
     setHostPicker({ action: 'serverTools', feature: featureLabel('serverTools', locale) })
-  }, [locale])
+  }, [locale, connectProfile])
 
   const interpretAlert = useCallback(async (alert: FiredAlert) => {
     const ready = await aiHasKey()
