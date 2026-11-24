@@ -25,7 +25,7 @@ assert.deepEqual(
     'dryRunPlaybook|剧本演练（Dry-run）…|Dry-run playbook…|low',
     'resourceMonitor|资源监控|Resource monitor|daily',
     'dashboard|多主机看板|Multi-host dashboard|low',
-    'serverTools|服务器工具箱|Server toolbox|daily',
+    'serverTools|运维工作台|Ops workbench|daily',
     'openDocker|Docker 容器…|Docker containers…|low',
     'refreshDocker|刷新 Docker|Refresh Docker|low',
     'batchExec|批量执行…|Batch run…|daily',
@@ -138,7 +138,9 @@ const toolbar = readFileSync('src/renderer/src/components/AppToolbar.tsx', 'utf8
 const opsStart = toolbar.indexOf('OPS_BUTTONS')
 const opsEnd = toolbar.indexOf(']', opsStart)
 const opsButtons = toolbar.slice(opsStart, opsEnd)
-assert.equal((opsButtons.match(/id: '/g) ?? []).length, 3, 'no new toolbar primary')
+// Resource monitor now lives inside the ops workbench as its 概览 tab, so the
+// titlebar keeps two primary ops buttons (workbench + SFTP).
+assert.equal((opsButtons.match(/id: '/g) ?? []).length, 2, 'no new toolbar primary')
 assert.equal(opsButtons.includes('runPlaybook'), false)
 assert.equal(opsButtons.includes('alertRules'), false)
 
