@@ -28,7 +28,7 @@ export const KEYMAP: ReadonlyArray<KeymapEntry> = [
   { id: 'settings', keys: 'Ctrl+,', scope: 'global', group: 'general', label: { zh: '设置', en: 'Settings' } },
   { id: 'connection', keys: 'Ctrl+Shift+N', scope: 'global', group: 'session', label: { zh: '新建连接', en: 'New connection' } },
   { id: 'sftp', keys: 'Ctrl+Alt+F', scope: 'global', group: 'session', label: { zh: 'SFTP 文件', en: 'SFTP files' } },
-  { id: 'serverTools', keys: 'Ctrl+Alt+T', scope: 'global', group: 'session', label: { zh: '服务器工具箱', en: 'Server toolbox' } },
+  { id: 'serverTools', keys: 'Ctrl+Alt+T', scope: 'global', group: 'session', label: { zh: '运维工作台', en: 'Ops workbench' } },
   { id: 'resourceMonitor', keys: 'Ctrl+Shift+M', scope: 'global', group: 'session', label: { zh: '资源监控', en: 'Resource monitor' } },
   { id: 'dashboard', keys: 'Ctrl+Alt+M', scope: 'global', group: 'session', label: { zh: '多主机看板', en: 'Multi-host dashboard' } },
   { id: 'opsHome', keys: 'Ctrl+Alt+H', scope: 'global', group: 'view', label: { zh: '运维首页', en: 'Ops home' } },

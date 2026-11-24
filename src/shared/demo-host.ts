@@ -62,7 +62,7 @@ export function demoWelcomeForProfile(profileId: string | undefined, locale: str
 export type DemoCommandResult = { output: string; code: number; clear?: boolean }
 
 const FILES: Record<string, string> = {
-  'readme.txt': 'This is the AI-SSH-Pro demo host.\nNothing here is real; try the toolbar buttons (Monitor, Toolbox, SFTP) too.\n',
+  'readme.txt': 'This is the AI-SSH demo host.\nNothing here is real; try the toolbar buttons (Monitor, Toolbox, SFTP) too.\n',
   'deploy.sh': '#!/usr/bin/env bash\nset -e\ngit pull\nnpm ci\nsystemctl restart app\n',
   '/etc/os-release': 'NAME="Ubuntu"\nVERSION="22.04.4 LTS (Jammy Jellyfish)"\nID=ubuntu\nPRETTY_NAME="Ubuntu 22.04.4 LTS"\n',
   '/etc/hostname': 'demo-host\n',
@@ -294,7 +294,7 @@ export const DEMO_FILES: ReadonlyArray<{ name: string; dir: boolean; size: numbe
 export type DemoFsEntry = { name: string; dir: boolean; size: number; content?: string }
 export const DEMO_TREE: Record<string, ReadonlyArray<DemoFsEntry>> = {
   '/home/demo': [
-    { name: 'README.md', dir: false, size: 180, content: 'AI-SSH-Pro demo host\nSimulated files — read only.\n' },
+    { name: 'README.md', dir: false, size: 180, content: 'AI-SSH demo host\nSimulated files — read only.\n' },
     { name: 'deploy.sh', dir: false, size: 78, content: '#!/usr/bin/env bash\nset -e\ngit pull\nnpm ci\nsystemctl restart app\n' },
     { name: 'notes.txt', dir: false, size: 64, content: 'Try Monitor, Toolbox and SFTP from the toolbar.\n' },
     { name: 'app', dir: true, size: 4096 },

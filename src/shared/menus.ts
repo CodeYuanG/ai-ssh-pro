@@ -332,7 +332,7 @@ export const SHARED_MENUS: SharedMenu[] = [
       sep,
       it('resourceMonitor', '资源监控', 'Resource monitor', { needsSession: true }),
       it('dashboard', '多主机看板', 'Multi-host dashboard', { menuHidden: true }),
-      it('serverTools', '服务器工具箱', 'Server toolbox', { needsSession: true }),
+      it('serverTools', '运维工作台', 'Ops workbench', { needsSession: true }),
       it('openDocker', 'Docker 容器…', 'Docker containers…', { needsSession: true, menuHidden: true }),
       it('refreshDocker', '刷新 Docker', 'Refresh Docker', { menuHidden: true }),
       sep,
@@ -387,7 +387,7 @@ export const SHARED_MENUS: SharedMenu[] = [
       it('checkUpdate', '检查更新', 'Check for updates'),
       sep,
       it('github', 'GitHub', 'GitHub'),
-      it('about', '关于 AI-SSH-Pro', 'About AI-SSH-Pro')
+      it('about', '关于 AI-SSH', 'About AI-SSH')
     ]
   }
 ]

@@ -42,7 +42,7 @@ export async function gistRead(token: string, gistId: string, fetchImpl: FetchLi
 
 export async function gistWrite(token: string, gistId: string | undefined, content: string, fetchImpl: FetchLike = fetch): Promise<RemoteResult<{ id: string }>> {
   const body = JSON.stringify({
-    description: 'AI-SSH-Pro encrypted vault',
+    description: 'AI-SSH encrypted vault',
     public: false,
     files: { 'ai-ssh-pro-vault.json': { content } }
   })

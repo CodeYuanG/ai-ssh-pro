@@ -9,8 +9,12 @@ export const OPS_HOME_TWO_LINE_WIDTH = 760
 /** Host tiles: `repeat(auto-fill, minmax(240px, 1fr))`. */
 export const OPS_HOME_TILE_MIN = 240
 export const OPS_HOME_GRID_GAP = 16
-/** At most this many host tiles; the rest live behind "在看板中查看全部 →". */
-export const OPS_HOME_CARD_CAP = 8
+/**
+ * Host tiles are no longer capped: the home page lists every host in scope so
+ * a "还有 N 台" row never hides part of the fleet. The grid still auto-fills
+ * columns, so a large fleet simply scrolls.
+ */
+export const OPS_HOME_CARD_CAP = Number.POSITIVE_INFINITY
 /** At most this many attention rows; the rest behind "在告警工作台查看". */
 export const OPS_HOME_ATTENTION_CAP = 5
 

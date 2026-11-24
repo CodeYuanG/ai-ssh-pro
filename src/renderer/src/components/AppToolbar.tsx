@@ -36,10 +36,11 @@ type Props = {
   onOpenUpdate?: () => void
 }
 
-/** Ops group buttons (UX-04): icon, label key, needs a session */
-/** UX-15 minimal default ops: monitor / toolbox / SFTP */
+/** UX-15 minimal default ops. The resource monitor now lives inside the ops
+ *  workbench as its "概览" tab; the titlebar leads with the ops home (host list)
+ *  and the workbench itself is opened from a host tile. */
 const OPS_BUTTONS: ReadonlyArray<{ id: TitlebarMenuAction; icon: IconName; label: MessageKey; title: MessageKey; needsSession: boolean }> = [
-  { id: 'resourceMonitor', icon: 'activity', label: 'toolbar.monitor', title: 'toolbar.monitorTitle', needsSession: true },
+  { id: 'opsHome', icon: 'activity', label: 'menu.opsHome', title: 'toolbar.opsHomeTitle', needsSession: false },
   { id: 'serverTools', icon: 'wrench', label: 'toolbar.toolbox', title: 'toolbar.toolboxTitle', needsSession: true },
   { id: 'sftp', icon: 'folder', label: 'toolbar.sftp', title: 'toolbar.sftpTitle', needsSession: true }
 ]
@@ -275,7 +276,10 @@ export default function AppToolbar({
           {OPS_BUTTONS.map((b) => {
             const dim = b.needsSession && !hasSession
             const keys = keysFor(b.id)
-            const title = dim ? t('pf7.connectFirst') : `${t(b.title)}${keys ? ` (${keys})` : ''}`
+            // UX-W04: keep the function name even when disabled; append the
+            // reason instead of replacing the name, so icon-only (narrow)
+            // buttons remain identifiable via tooltip.
+            const title = `${t(b.title)}${keys ? ` (${keys})` : ''}${dim ? ` — ${t('pf7.connectFirst')}` : ''}`
             return (
               <button
                 key={b.id}

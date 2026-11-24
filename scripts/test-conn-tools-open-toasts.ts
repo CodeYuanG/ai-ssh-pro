@@ -26,7 +26,7 @@ assert.ok(i18n.includes("toolbar.newConn': '新建连接'"))
 assert.ok(i18n.includes("tab.forward': '端口转发'"))
 assert.ok(i18n.includes("g3.monitor': '打开监控'"))
 assert.ok(i18n.includes("ctx.batch': '批量执行…'"))
-assert.ok(i18n.includes("ctx.toolbox': '服务器工具箱'"))
+assert.ok(i18n.includes("ctx.toolbox': '运维工作台'"))
 assert.ok(i18n.includes("toolbar.searchFeatures': '搜索功能…'"))
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string; scripts: { test: string; 'test:parts'?: string } }

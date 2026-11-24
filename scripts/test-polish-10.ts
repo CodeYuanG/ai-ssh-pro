@@ -245,6 +245,6 @@ assert.equal(opsButtons.includes('alertRules'), false)
 
 const about = readFileSync('src/renderer/src/components/AboutBlock.tsx', 'utf8')
 assert.ok(about.includes('PRODUCT_NAME') && about.includes('GITEE_REPO_URL'))
-assert.equal(PRODUCT_NAME, 'AI-SSH-Pro')
+assert.equal(PRODUCT_NAME, 'AI-SSH')
 
 console.log('test-polish-10 ok')

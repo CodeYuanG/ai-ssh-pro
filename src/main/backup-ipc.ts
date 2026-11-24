@@ -23,7 +23,7 @@ type BackupPayload = {
   ai?: ReturnType<typeof getAiSettings>
 }
 
-const FILTERS = [{ name: 'AI-SSH-Pro backup', extensions: ['aissbak'] }]
+const FILTERS = [{ name: 'AI-SSH backup', extensions: ['aissbak'] }]
 
 function counts(p: Pick<BackupPayload, 'savedSessions' | 'snippets'>): Counts {
   return {

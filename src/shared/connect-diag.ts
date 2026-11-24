@@ -19,7 +19,7 @@ export type ConnectDiagInput = {
 
 export function buildConnectDiag(d: ConnectDiagInput): string {
   const lines = [
-    'AI-SSH-Pro connection diagnostics',
+    'AI-SSH connection diagnostics',
     `time: ${d.at.toISOString()}`,
     `target: ${d.user}@${d.target}`,
     `auth: ${d.authMode || 'auto'}`,

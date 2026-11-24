@@ -286,9 +286,8 @@ export default function AlertWorkbenchTab({
     const target = locateTargetFor(alert.ruleId)
     const label = target.kind === 'toolbox' ? t(TARGET_KEY[target.tab]) : t('l2.openTerminal')
     try {
-      if (!onlineIds.has(alert.hostKey) && target.kind !== 'terminal') {
-        setLocateError(t('l2.offlineHost'))
-      }
+      // The app layer reconnects an offline saved host automatically, so this
+      // stays a single user action: connect (if needed) then open the view.
       onLocate(alert)
       markLoop(alert.id, 'locate')
       window.dispatchEvent(new Event('aiss-loop-mark'))
@@ -531,7 +530,7 @@ export default function AlertWorkbenchTab({
                 {t('l2.threshold', { n: selected.threshold })}
                 {selected.handledManually ? ` · ${t('l2.handledManually')}` : ''}
               </p>
-              {!online ? <div className="l2-warn">{t('l2.offlineHost')}</div> : null}
+              {!online ? <div className="l2-warn">{t('l2.offlineWillConnect')}</div> : null}
               {locateError ? (
                 <div className="l2-error" data-testid="l2-locate-error">
                   {t('l2.cantLocate', { reason: locateError })}
@@ -562,17 +561,18 @@ export default function AlertWorkbenchTab({
                 <Button variant="primary"
                   data-testid="l2-locate"
                   disabled={locating}
+                  title={selected && !onlineIds.has(selected.hostKey) ? t('l2.offlineWillConnect') : undefined}
                   onClick={() => doLocate(selected)}
                 >
-                  {locating ? t('l2.connecting', { host: selected.hostTitle }) : t('l2.locate')}
+                  {locating
+                    ? t('l2.connecting', { host: selected.hostTitle })
+                    : selected && !onlineIds.has(selected.hostKey)
+                      ? t('l2.locateOffline')
+                      : t('l2.locate')}
                 </Button>
                 <button type="button" title={t('l2.openTerminal')} onClick={() => onOpenTerminal(selected)}>
                   <Icon name="keyboard" size={14} />
                   <span className="l2-lbl">{t('l2.openTerminal')}</span>
-                </button>
-                <button type="button" title={t('menu.resourceMonitor')} onClick={() => onOpenMonitor(selected)}>
-                  <Icon name="activity" size={14} />
-                  <span className="l2-lbl">{t('menu.resourceMonitor')}</span>
                 </button>
                 <button type="button" title={t('tab.toolbox')} onClick={() => onOpenToolbox(selected)}>
                   <Icon name="wrench" size={14} />
