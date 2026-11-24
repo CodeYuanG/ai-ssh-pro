@@ -93,6 +93,7 @@ export default function OpsHomeTab({
   onOpenDashboard,
   onOpenWorkbench,
   onOpenMonitor,
+  onOpenTools,
   onConnect,
   onEditHost,
   onOpenHostSftp,
@@ -144,6 +145,8 @@ export default function OpsHomeTab({
   onOpenDashboard: () => void
   onOpenWorkbench: (alertId?: string) => void
   onOpenMonitor: (host: HomeHost) => void
+  /** Opens the server toolbox (its 概览 tab covers the resource monitor). */
+  onOpenTools: (host: HomeHost) => void
   onConnect: (host: HomeHost) => void
   onEditHost?: (profileId: string) => void
   onOpenHostSftp?: (host: HomeHost) => void
@@ -221,7 +224,7 @@ export default function OpsHomeTab({
     return hosts.filter((h) => ids.has(h.profileId))
   }, [hosts, sampleHosts, probePrefs, probeTargets])
   const notSampledCount = probePrefs.enabled ? applyProbeFilters(sampleHosts, probePrefs).length - cardSource.length : 0
-  // One structure at every width: tiles cap at OPS_HOME_CARD_CAP, the grid only changes its column count.
+  // All hosts in scope are listed (alerting first); the grid only changes its column count.
   const ranked = useMemo(() => pickHealthHosts(cardSource, (h) => h.alerting, OPS_HOME_CARD_CAP), [cardSource])
   const visibleSamples = useMemo<SampleHost[]>(
     () =>
@@ -452,7 +455,7 @@ export default function OpsHomeTab({
           ]
         : [
             { id: 'connect', label: t('l7.connect'), onSelect: () => onConnect(item.host) },
-            { id: 'monitor', label: t('l7e.monitor'), onSelect: () => onOpenMonitor(item.host) },
+            { id: 'tools', label: t('toolbar.toolbox'), onSelect: () => onOpenTools(item.host) },
             { id: 'guard', label: t('l4.menu'), onSelect: () => onGuard(item.host.profileId) }
           ]
     openContextMenu(at, items)
@@ -686,178 +689,6 @@ export default function OpsHomeTab({
         <div className="oh-page">
           {header}
 
-          {showTasks && taskTotal > 0 ? (
-            <div className="oh-tasks l7-tasks" data-testid="l7-tasks">
-              <span className="oh-tasks-count">{t('l7.tasks', { done: taskDone, total: taskTotal })}</span>
-              <span className="oh-progress" aria-hidden>
-                <i style={{ width: `${Math.round((taskDone / taskTotal) * 100)}%` }} />
-              </span>
-              {nextTask ? <span className="oh-tasks-next">{t('l7e.nextStep', { task: t(TASK_KEY[nextTask]) })}</span> : null}
-              <button type="button" className="oh-link" onClick={onTasks}>
-                {t('l7e.continue')}
-              </button>
-              {onDismissTasks ? (
-                <Button variant="icon" icon="x" aria-label={t('l7e.hideTasks')} title={t('l7e.hideTasks')} onClick={onDismissTasks} />
-              ) : null}
-            </div>
-          ) : null}
-
-          <Section
-            title={t('l7e.attention')}
-            count={pendingCount}
-            label={t('l7e.attention')}
-            tools={
-              <div className="oh-seg l7-filters" role="tablist" aria-label={t('l7e.attention')}>
-                {(['active', 'all', 'ignored'] as const).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="tab"
-                    aria-selected={inboxFilter === key}
-                    className={inboxFilter === key ? 'is-on' : ''}
-                    onClick={() => {
-                      setInboxFilter(key)
-                      setAttnFocus(0)
-                    }}
-                  >
-                    {t(key === 'active' ? 'l2.active' : key === 'ignored' ? 'l2.dismissed' : 'l2.all')}
-                  </button>
-                ))}
-              </div>
-            }
-            link={
-              <>
-                {muted ? (
-                  <span className="oh-chip l7-mute" data-testid="l7-mute">
-                    <span>{t('l7.mutedUntil', { time: new Date(mutedUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}</span>
-                    <span aria-hidden>·</span>
-                    <button type="button" title={t('l7.unmute')} onClick={onUnmute}>
-                      {t('l7e.cancel')}
-                    </button>
-                  </span>
-                ) : null}
-                {failCount > 1 ? (
-                  <button
-                    type="button"
-                    className="oh-link"
-                    data-testid="l7c-retry-all"
-                    disabled={cooling}
-                    title={cooling ? t('l7c.retryCool') : t('l7c.retryAll')}
-                    onClick={() => sampling.retryAll()}
-                  >
-                    {cooling ? t('l7c.retryCool') : t('l7c.retryAll')}
-                  </button>
-                ) : null}
-                <button type="button" className="oh-link" onClick={() => onOpenWorkbench()}>
-                  {t('l7e.workbench')}
-                </button>
-              </>
-            }
-          >
-            {shownAttn.length === 0 ? (
-              <div className="oh-clear" data-testid="l7-inbox-empty" role="status">
-                <Icon name="check" size={14} strokeWidth={2} />
-                <span className="oh-clear-title">{inboxFilter === 'active' ? t('l7e.allClear') : t('l7.noAlerts')}</span>
-                <span className="oh-clear-sub">· {t('l7e.allClearSub')}</span>
-                <button type="button" className="oh-link" onClick={onRules}>
-                  {t('l7e.rules')}
-                </button>
-              </div>
-            ) : (
-              <div className="oh-rows l7-rows" role="list" aria-label={t('l7e.attention')} ref={rowsRef}>
-                {shownAttn.map((item, i) => {
-                  const isAlert = item.kind === 'alert'
-                  const host = isAlert ? item.alert.hostTitle : item.host.title
-                  const message = isAlert
-                    ? item.alert.ruleId === 'offline'
-                      ? t(RULE_KEY.offline)
-                      : t('l7e.threshold', { rule: t(RULE_KEY[item.alert.ruleId]), value: `${Math.round(item.alert.value)}%`, threshold: item.alert.threshold })
-                    : t('l7e.unreachableMsg', { reason: item.reason })
-                  const time = isAlert ? ago(item.alert.at) : item.retryHint || (item.at ? staleHint(item.at) : '')
-                  const maint = isAlert ? silenceUntil(loadMaintenance(), { keys: [item.alert.hostKey, item.alert.hostTitle], tags: [] }, now) : null
-                  return (
-                    <div
-                      key={item.id}
-                      className={`oh-row is-${item.sev}${isAlert && item.alert.status !== 'active' ? ' is-quiet' : ''}`}
-                      role="listitem"
-                      data-oh-row
-                      data-testid={isAlert ? 'alert-line' : 'l7e-host-row'}
-                      data-alert-id={isAlert ? item.alert.id : undefined}
-                      tabIndex={i === Math.min(attnFocus, shownAttn.length - 1) ? 0 : -1}
-                      onFocus={() => setAttnFocus(i)}
-                      onClick={() => (isAlert ? onOpenWorkbench(item.alert.id) : retryHost(item.host))}
-                      onKeyDown={(e) => onRowKey(e, i, item)}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        rowMenu(item, e)
-                      }}
-                    >
-                      <i className={`oh-dot oh-dot--${item.sev}`} aria-hidden />
-                      <span className="oh-row-host" title={host}>{host}</span>
-                      <span className="oh-row-msg" title={isAlert ? message : `${message}`}>{message}</span>
-                      <span className="oh-row-time" title={maint ? t('l2d.until', { time: new Date(maint).toLocaleTimeString() }) : undefined}>{time}</span>
-                      <span className="oh-row-actions" onClick={(e) => e.stopPropagation()}>
-                        {isAlert ? (
-                          <>
-                            <Button
-                              variant="secondary"
-                              className="oh-mini"
-                              data-testid="w1-row-explain"
-                              disabled={aiConfigured === false}
-                              title={aiConfigured === false ? t('w1.needAi') : t('a4.interpret')}
-                              onClick={() => onExplain(item.alert)}
-                            >
-                              {t('a4.interpret')}
-                            </Button>
-                            <Button variant="secondary" className="oh-mini" onClick={() => onLocate(item.alert)}>
-                              {t('l7.connect')}
-                            </Button>
-                            {item.alert.status === 'active' ? (
-                              <Button variant="ghost" className="oh-mini" title={`${t('l2.dismiss')} (Delete)`} onClick={() => onDismiss(item.alert)}>
-                                {t('l2.dismiss')}
-                              </Button>
-                            ) : null}
-                          </>
-                        ) : (
-                          <>
-                            <Button variant="secondary" className="oh-mini" data-testid="l7e-row-retry" onClick={() => retryHost(item.host)}>
-                              {t('l7b.retry')}
-                            </Button>
-                            <Button variant="secondary" className="oh-mini" onClick={() => (onEditHost ? onEditHost(item.host.profileId) : onGuard(item.host.profileId))}>
-                              {t('l7e.editHost')}
-                            </Button>
-                            {!item.ignored ? (
-                              <Button variant="ghost" className="oh-mini" title={`${t('l2.dismiss')} (Delete)`} onClick={() => ignoreHost(item.host)}>
-                                {t('l2.dismiss')}
-                              </Button>
-                            ) : null}
-                          </>
-                        )}
-                        <Button
-                          variant="icon"
-                          className="oh-mini"
-                          aria-label={t('toolbar.more')}
-                          title={t('toolbar.more')}
-                          onClick={(e) => {
-                            const r = e.currentTarget.getBoundingClientRect()
-                            rowMenu(item, { clientX: r.left, clientY: r.bottom })
-                          }}
-                        >
-                          ⋯
-                        </Button>
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            {attention.length > shownAttn.length ? (
-              <button type="button" className="oh-link oh-more-rows" onClick={() => onOpenWorkbench()}>
-                {t('l7e.moreRows', { n: attention.length - shownAttn.length })}
-              </button>
-            ) : null}
-          </Section>
-
           <Section
             title={t('l7e.hosts')}
             count={cardSource.length}
@@ -980,8 +811,8 @@ export default function OpsHomeTab({
                         <Button variant="secondary" className="oh-mini" onClick={() => (onOpenHostSftp ? onOpenHostSftp(h) : onOpenSftp?.())}>
                           SFTP
                         </Button>
-                        <Button variant="secondary" className="oh-mini" onClick={() => onOpenMonitor(h)}>
-                          {t('l7e.monitor')}
+                        <Button variant="secondary" className="oh-mini" data-testid="oh-tile-toolbox" onClick={() => onOpenTools(h)}>
+                          {t('toolbar.toolbox')}
                         </Button>
                       </div>
                     </article>
@@ -993,16 +824,13 @@ export default function OpsHomeTab({
                 </button>
               </div>
             )}
-            {ranked.more > 0 ? <p className="oh-muted oh-grid-note">{t('l7.moreHosts', { n: ranked.more })}</p> : null}
-            {ranked.more === 0 && notSampledCount > 0 ? (
+            {notSampledCount > 0 ? (
               <p className="oh-muted oh-grid-note" data-testid="oh-not-sampled">
                 {t('l7e.notSampled', { n: notSampledCount })}
                 <button type="button" className="oh-link" onClick={() => setProbeOpen(true)}>{t('l7b.settings')}</button>
               </p>
             ) : null}
           </Section>
-
-          {quick}
         </div>
       </div>
       {menu ? (
@@ -1017,8 +845,8 @@ export default function OpsHomeTab({
             const host = hosts.find((h) => h.profileId === menu.profileId)
             const profileId = menu.profileId
             setMenu(null)
-            if (id === 'monitor') {
-              if (host) onOpenMonitor(host)
+            if (id === 'tools' || id === 'monitor') {
+              if (host) onOpenTools(host)
             } else if (id === 'connect') {
               if (host) onConnect(host)
             } else if (id === 'workbench') {

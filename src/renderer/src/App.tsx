@@ -9747,6 +9747,24 @@ export default function App() {
                         if (p) void monitorProfile(p)
                       }
                     }}
+                    onOpenTools={(host) => {
+                      // The toolbox now owns the resource monitor (its 概览 tab),
+                      // so a host tile opens one panel for both.
+                      if (host.sessionId) openToolTabRef.current('toolbox', host.sessionId)
+                      else {
+                        const p = profiles.find((x) => x.id === host.profileId)
+                        if (p) {
+                          pendingLocateRef.current = 'overview'
+                          void (async () => {
+                            const sid = await connectProfile(p)
+                            if (!sid) { pendingLocateRef.current = null; return }
+                            await new Promise((r) => window.setTimeout(r, 120))
+                            pendingLocateRef.current = null
+                            openToolTabRef.current('toolbox', sid, undefined, 0, 'overview')
+                          })()
+                        }
+                      }
+                    }}
                     onConnect={(host) => {
                       const p = profiles.find((x) => x.id === host.profileId)
                       if (p) openOrFocusProfile(p)

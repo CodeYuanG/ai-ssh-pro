@@ -22,9 +22,10 @@ import EmptyState from './EmptyState'
 import { QUIET_LOAD_ATTRS } from '@shared/quiet-load'
 import type { BatchSessionOption } from './BatchExecuteModal'
 import DockerToolboxTab, { type DockerToolboxOpen } from './DockerToolboxTab'
+import ResourceMonitorModal from './ResourceMonitorModal'
 import Button from './ui/Button'
 
-export type ServerToolsTab = 'processes' | 'services' | 'ports' | 'logs' | 'df' | 'docker'
+export type ServerToolsTab = 'overview' | 'processes' | 'services' | 'ports' | 'logs' | 'df' | 'docker'
 
 type Props = {
   open: boolean
@@ -44,7 +45,7 @@ type Props = {
 const cleanErr = (e: unknown) =>
   friendlyErrorMessage(e)
 
-const TABS: ServerToolsTab[] = ['processes', 'services', 'ports', 'logs', 'df', 'docker']
+const TABS: ServerToolsTab[] = ['overview', 'processes', 'services', 'ports', 'logs', 'df', 'docker']
 
 /** Processes, systemd services, listening ports and log tail of one connected Linux host. */
 export default function ServerToolsModal({ open, sessions, activeSessionId, initialTab, onClose, embedded, writesDisabled = false, onOpenDocker, onDockerChanged }: Props) {
@@ -122,6 +123,16 @@ export default function ServerToolsModal({ open, sessions, activeSessionId, init
             </div>
             {error ? <p className="st-error">{error}</p> : null}
             {notice ? <p className="st-notice">{notice}</p> : null}
+            {sessionId && tab === 'overview' ? (
+              <ResourceMonitorModal
+                key={sessionId}
+                open={false}
+                embedded
+                sessions={sessions}
+                activeSessionId={sessionId}
+                onClose={() => undefined}
+              />
+            ) : null}
             {sessionId && tab === 'processes' ? <ProcessesTab key={sessionId} {...common} /> : null}
             {sessionId && tab === 'services' ? <ServicesTab key={sessionId} {...common} /> : null}
             {sessionId && tab === 'ports' ? <PortsTab key={sessionId} {...common} /> : null}

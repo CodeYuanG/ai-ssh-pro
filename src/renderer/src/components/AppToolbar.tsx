@@ -37,9 +37,9 @@ type Props = {
 }
 
 /** Ops group buttons (UX-04): icon, label key, needs a session */
-/** UX-15 minimal default ops: monitor / toolbox / SFTP */
+/** UX-15 minimal default ops. The resource monitor now lives inside the toolbox
+ *  as its "概览" tab, so it no longer needs a separate titlebar entry. */
 const OPS_BUTTONS: ReadonlyArray<{ id: TitlebarMenuAction; icon: IconName; label: MessageKey; title: MessageKey; needsSession: boolean }> = [
-  { id: 'resourceMonitor', icon: 'activity', label: 'toolbar.monitor', title: 'toolbar.monitorTitle', needsSession: true },
   { id: 'serverTools', icon: 'wrench', label: 'toolbar.toolbox', title: 'toolbar.toolboxTitle', needsSession: true },
   { id: 'sftp', icon: 'folder', label: 'toolbar.sftp', title: 'toolbar.sftpTitle', needsSession: true }
 ]
