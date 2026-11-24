@@ -299,7 +299,7 @@ async function fetchSource(
     return await fetchImpl(url, {
       headers: {
         Accept: 'application/vnd.github+json, application/json',
-        'User-Agent': `AI-SSH-Pro/${currentVersion}`
+        'User-Agent': `AI-SSH/${currentVersion}`
       },
       signal: ctrl.signal
     })

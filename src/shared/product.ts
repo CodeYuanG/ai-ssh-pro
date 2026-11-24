@@ -1,5 +1,5 @@
 /** Formal product name. About, the title bar, and the tray/taskbar hover share this string. */
-export const PRODUCT_NAME = 'AI-SSH-Pro'
+export const PRODUCT_NAME = 'AI-SSH'
 
 const DEBUG_PATH = /[\\/]|file:|\.html?\b|\.tsx?\b|\.jsx?\b|node_modules|\b(?:src|out|dist)\b|localhost|:\d{2,5}/
 

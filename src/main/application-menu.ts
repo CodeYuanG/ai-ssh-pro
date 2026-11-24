@@ -42,7 +42,7 @@ export function buildMenuTemplate(isMac = process.platform === 'darwin'): Electr
     template.push({
       label: app.name,
       submenu: [
-        { label: mt('关于 AI-SSH-Pro', 'About AI-SSH-Pro'), click: () => sendOpenDialog('about') },
+        { label: mt('关于 AI-SSH', 'About AI-SSH'), click: () => sendOpenDialog('about') },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },

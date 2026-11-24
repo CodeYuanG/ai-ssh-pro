@@ -387,7 +387,7 @@ export const SHARED_MENUS: SharedMenu[] = [
       it('checkUpdate', '检查更新', 'Check for updates'),
       sep,
       it('github', 'GitHub', 'GitHub'),
-      it('about', '关于 AI-SSH-Pro', 'About AI-SSH-Pro')
+      it('about', '关于 AI-SSH', 'About AI-SSH')
     ]
   }
 ]

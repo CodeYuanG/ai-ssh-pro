@@ -79,7 +79,7 @@ assert.equal(isEngineerLeak(disconnectStatusSentence(leaked, 'en')), false)
 
 const title = trayHoverTitle()
 assert.equal(title, PRODUCT_NAME)
-assert.equal(title, 'AI-SSH-Pro')
+assert.equal(title, 'AI-SSH')
 assert.equal(/[\\/]|file:|\.html|\.tsx|node_modules/.test(title), false)
 
 const about = readFileSync('src/renderer/src/components/AboutBlock.tsx', 'utf8')
