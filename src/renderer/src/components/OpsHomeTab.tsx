@@ -403,7 +403,11 @@ export default function OpsHomeTab({
   }, [alerts, inboxFilter, ranked.shown, sampling.snaps, snaps, probePrefs.enabled, ignoredHosts, now, t])
   const shownAttn = attention.slice(0, OPS_HOME_ATTENTION_CAP)
   const pendingCount = activeCount + attention.filter((x) => x.kind === 'host' && !x.ignored).length
-  const onlineCount = hosts.filter((h) => h.online).length
+  // A host counts as online when it has a live session, a TCP probe, or a fresh
+  // health sample — sampling alone used to leave the counter at 0 while cards
+  // showed live CPU numbers.
+  const isOnline = (h: HomeHost) => h.online || sampling.snaps[h.profileId]?.phase === 'ok'
+  const onlineCount = hosts.filter(isOnline).length
 
   const onFixPlaybook = (a: FiredAlert) => {
     const plan = planAlertFix(a.id, aiConfigured !== false)
@@ -765,7 +769,23 @@ export default function OpsHomeTab({
                             title={t('o2.badge')}
                           />
                         ) : null}
-                        <span className="l7-card-lat">{latency != null ? `${latency} ms` : h.online ? '—' : t('l7.offline')}</span>
+                        {/*
+                          Reachability: a live session, a TCP probe, or a successful
+                          health sample all prove the host is up. While the sampler is
+                          still queued/probing we show a neutral dash rather than
+                          asserting "离线" on an unprobed host.
+                        */}
+                        <span className="l7-card-lat">
+                          {latency != null
+                            ? `${latency} ms`
+                            : h.online ||
+                                probeSnap?.phase === 'ok' ||
+                                probeSnap?.phase === 'queued' ||
+                                probeSnap?.phase === 'probing' ||
+                                sessionSnap
+                              ? '—'
+                              : t('l7.offline')}
+                        </span>
                       </div>
                       <CardMetrics
                         view={view}
