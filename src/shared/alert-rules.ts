@@ -56,6 +56,8 @@ export type FiredAlert = {
   id: string
   hostKey: string
   hostTitle: string
+  /** Saved-host id (profile). Survives reconnects; hostKey is a session id. */
+  profileId?: string
   ruleId: AlertMetric
   value: number
   threshold: number
@@ -224,6 +226,9 @@ export function evaluateAlerts(opts: {
       id: `${key}:${now}`,
       hostKey: opts.hostKey,
       hostTitle: opts.hostTitle,
+      // Persisted host id, so locating this alert still works after the SSH
+      // session (hostKey) is gone.
+      profileId: opts.profileId,
       ruleId: rule.id,
       value,
       threshold: rule.threshold,

@@ -574,10 +574,6 @@ export default function AlertWorkbenchTab({
                   <Icon name="keyboard" size={14} />
                   <span className="l2-lbl">{t('l2.openTerminal')}</span>
                 </button>
-                <button type="button" title={t('menu.resourceMonitor')} onClick={() => onOpenMonitor(selected)}>
-                  <Icon name="activity" size={14} />
-                  <span className="l2-lbl">{t('menu.resourceMonitor')}</span>
-                </button>
                 <button type="button" title={t('tab.toolbox')} onClick={() => onOpenToolbox(selected)}>
                   <Icon name="wrench" size={14} />
                   <span className="l2-lbl">{t('tab.toolbox')}</span>

@@ -7689,8 +7689,22 @@ export default function App() {
   const locateAlert = useCallback((alert: FiredAlert) => {
     const target = locateTargetFor(alert.ruleId)
     const targetTab = target.kind === 'toolbox' ? target.tab : 'terminal'
+    // Resolve the saved host first: alert.hostKey is a *session* id and dies with
+    // the connection, while profileId survives reconnects.
+    const saved =
+      (alert.profileId ? profilesRef.current.find((p) => p.id === alert.profileId) : undefined) ??
+      profilesRef.current.find((p) => p.id === alert.hostKey) ??
+      // Legacy alerts (stored before profileId existed) fall back to the host title.
+      profilesRef.current.find(
+        (p) =>
+          (p.label?.trim() || p.host) === alert.hostTitle ||
+          p.host === alert.hostTitle
+      )
     const live = tabsRef.current.find(
-      (t) => t.sessionId === alert.hostKey && t.status === 'connected' && (!t.view || t.view === 'session')
+      (t) =>
+        t.status === 'connected' &&
+        (!t.view || t.view === 'session') &&
+        (t.sessionId === alert.hostKey || (saved && t.profileId === saved.id))
     )
     if (live) {
       if (target.kind === 'toolbox') openToolTabRef.current('toolbox', live.sessionId, undefined, 0, target.tab)
@@ -7703,9 +7717,8 @@ export default function App() {
       return
     }
     // Not connected: reconnect the saved host automatically instead of asking the
-    // user to pick it and come back. Falls back to the picker when the host is
-    // unknown (e.g. an ad-hoc quick-connect that was never saved).
-    const saved = profilesRef.current.find((p) => p.id === alert.hostKey)
+    // user to pick it and come back. The picker is only a last resort for hosts
+    // that were never saved.
     if (saved) {
       pendingLocateRef.current = targetTab
       showToast(tg('l2.connecting', { host: saved.label?.trim() || saved.host }))
