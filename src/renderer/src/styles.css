@@ -1387,6 +1387,8 @@ body.layout-resizing {
   min-width: 0;
   min-height: 0;
   background: var(--color-bg-app);
+  /* Anchors the bell popover, which must escape the tab-bar's overflow:hidden. */
+  position: relative;
 }
 
 .app-statusbar {

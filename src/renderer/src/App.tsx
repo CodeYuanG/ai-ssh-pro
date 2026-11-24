@@ -213,6 +213,7 @@ import {
   valueMomentDismissWrites
 } from '@shared/value-moment'
 import ValueMomentBar from './components/ValueMomentBar'
+import AlertPopover from './components/AlertPopover'
 import { recentIdentity } from '@shared/recent-sidebar'
 import type { JumpHop } from '@shared/jump-chain'
 import { loadPlaybooks, savePlaybooks, upsertPlaybook } from '@shared/playbook'
@@ -622,6 +623,16 @@ export default function App() {
   const [alertHistory, setAlertHistory] = useState<FiredAlert[]>(() => loadAlertHistory())
   const [rulesDock, setRulesDock] = useState<{ nonce: number; tab: 'rules' | 'history' } | null>(null)
   const [bellPrefs, setBellPrefs] = useState<BellPrefs>(() => loadBellPrefs())
+  // Bell now opens an inline alert popover instead of creating a workbench tab.
+  const [alertPopoverOpen, setAlertPopoverOpen] = useState(false)
+  // Only ticks while the popover is open, so relative ages stay fresh without a global timer.
+  const [alertPopoverNow, setAlertPopoverNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!alertPopoverOpen) return
+    setAlertPopoverNow(Date.now())
+    const id = window.setInterval(() => setAlertPopoverNow(Date.now()), 30_000)
+    return () => window.clearInterval(id)
+  }, [alertPopoverOpen])
   const [statusLatencyMs, setStatusLatencyMs] = useState<number | null | undefined>(undefined)
   const [dashScope, setDashScope] = useState<DashScope>(() => loadDashScope())
   const [startupMode, setStartupMode] = useState<StartupMode>(() => loadStartupMode())
@@ -8528,14 +8539,9 @@ export default function App() {
               data-testid="alert-bell"
               data-flash={bellShouldFlash(maintSubjects, loadMaintenance()) ? '1' : '0'}
               title={tg('l2.bellOpens')}
-              onClick={() => {
-                if (bellPrefs.mode === 'drawer') {
-                  openClassifiedEditor('alert-history')
-                } else {
-                  const first = alertHistory.find((a) => a.status === 'active')
-                  openWorkbench(first ? { alertId: first.id } : undefined)
-                }
-              }}
+              aria-expanded={alertPopoverOpen}
+              data-open={alertPopoverOpen ? '1' : '0'}
+              onClick={() => setAlertPopoverOpen((v) => !v)}
             >
               <Icon name="bell" size={16} />
               {activeCount(alertHistory) > 0 ? <span className="alert-bell-count">{activeCount(alertHistory)}</span> : null}
@@ -8957,6 +8963,20 @@ export default function App() {
                 )
               : null}
           </div>
+          <AlertPopover
+            open={alertPopoverOpen}
+            alerts={alertHistory}
+            now={alertPopoverNow}
+            onClose={() => setAlertPopoverOpen(false)}
+            onOpenWorkbench={(alertId) => {
+              setAlertPopoverOpen(false)
+              openWorkbench(alertId ? { alertId } : { filter: 'all' })
+            }}
+            onOpenRules={() => {
+              setAlertPopoverOpen(false)
+              openClassifiedEditor('alert-rules')
+            }}
+          />
           {broadcastSessions.length ? <div className="broadcast-bar" data-testid="broadcast-bar" aria-hidden /> : null}
           {tabMenu
             ? (() => {
