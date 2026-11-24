@@ -8355,13 +8355,6 @@ export default function App() {
                 ) : null}
               </div>
               <div className="sidebar-scroll" tabIndex={0} onKeyDown={onSidebarKeyDown}>
-                <RecentConnections
-                  hideWhenEmpty={profiles.length === 0}
-                  onQuickConnect={quickConnectRecent}
-                  onSaveAsHost={saveRecentAsHost}
-                  savedKeys={profiles.map((p) => `${p.username}@${p.host}:${p.port || 22}`)}
-                  demoRenamed={profiles.some((p) => p.id === DEMO_PROFILE_ID && p.demoRenamed)}
-                />
                 {error && activeTab?.view !== 'connection' && (
                   failureCard ?? (
                   <ErrorNotice
