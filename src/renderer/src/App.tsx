@@ -296,6 +296,7 @@ import {
   withPaneToggle,
   type LayoutPrefs
 } from './lib/layout-prefs'
+import { useNarrowLayout } from './lib/use-narrow-layout'
 import {
   loadSidebarExpandPrefs,
   saveSidebarExpandPrefs
@@ -732,6 +733,9 @@ export default function App() {
   const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null)
   const [localShellAvailable, setLocalShellAvailable] = useState(false)
   const [layout, setLayout] = useState<LayoutPrefs>(() => loadLayoutPrefs())
+  // UX-W01: derive the rendered layout from the persisted one on narrow viewports.
+  const narrowLayout = useNarrowLayout()
+  const visibleLayout = narrowLayout.visibleLayout(layout)
 
   const updateLayout = useCallback((patch: Partial<LayoutPrefs> | ((prev: LayoutPrefs) => LayoutPrefs)) => {
     setLayout((prev) => {
@@ -742,20 +746,23 @@ export default function App() {
   }, [])
 
   const toggleSidebar = useCallback(() => {
-    const next = !layout.showSidebar
+    // UX-W01: act on what the user actually sees (the effective layout).
+    const next = !visibleLayout.showSidebar
     updateLayout((p) => withPaneToggle(p, 'sidebar', next))
+    narrowLayout.noteManualToggle('showSidebar', next)
     showToast(tg(next ? 'toolbar.showSidebar' : 'toolbar.hideSidebar'))
-  }, [updateLayout, layout.showSidebar])
+  }, [updateLayout, visibleLayout.showSidebar, narrowLayout])
   const toggleMain = useCallback(() => {
-    const next = !layout.showMain
+    const next = !visibleLayout.showMain
     updateLayout((p) => withPaneToggle(p, 'main', next))
     showToast(tg(next ? 'toolbar.showMain' : 'toolbar.hideMain'))
-  }, [updateLayout, layout.showMain])
+  }, [updateLayout, visibleLayout.showMain])
   const toggleAi = useCallback(() => {
-    const next = !layout.showAi
+    const next = !visibleLayout.showAi
     updateLayout((p) => withPaneToggle(p, 'ai', next))
+    narrowLayout.noteManualToggle('showAi', next)
     showToast(tg(next ? 'toolbar.showAi' : 'toolbar.hideAi'))
-  }, [updateLayout, layout.showAi])
+  }, [updateLayout, visibleLayout.showAi, narrowLayout])
   const [rightPane, setRightPane] = useState<RightPaneId>(() => loadLayoutPrefs().rightPane)
   const [aiPending, setAiPending] = useState<AiPendingInfo | null>(null)
   const [aiFocusPendingToken, setAiFocusPendingToken] = useState(0)
@@ -775,7 +782,10 @@ export default function App() {
       const base = p.showAi ? p : withPaneToggle(p, 'ai', true)
       return { ...base, rightPane: pane }
     })
-  }, [updateLayout])
+    // UX-W01: opening the AI/snippets panel is an explicit user action; keep it
+    // visible even on a narrow viewport where it would otherwise auto-collapse.
+    narrowLayout.noteManualToggle('showAi', true)
+  }, [updateLayout, narrowLayout])
   // c51 PL1: switching tabs closes every portal popover (DateField, Select, menus) so none leaks onto the next tab
   useEffect(() => {
     closeContextMenu()
@@ -1978,8 +1988,8 @@ export default function App() {
   }
   // TO-5: activating or opening a tab scrolls that tab into the strip, not the page.
   useEffect(() => {
-    if (activeTabId && layout.showMain) revealTab(activeTabId)
-  }, [activeTabId, tabs.length, layout.showMain])
+    if (activeTabId && visibleLayout.showMain) revealTab(activeTabId)
+  }, [activeTabId, tabs.length, visibleLayout.showMain])
   useEffect(() => {
     const bar = tabBarRef.current
     if (!bar) return
@@ -2022,7 +2032,7 @@ export default function App() {
       scroll.removeEventListener('scroll', measure)
       bar.removeEventListener('wheel', onWheel, { capture: true })
     }
-  }, [tabs.length, locale, layout.showMain, layout.showSidebar, layout.showAi])
+  }, [tabs.length, locale, visibleLayout.showMain, visibleLayout.showSidebar, visibleLayout.showAi])
   useEffect(() => {
     if (!tabOverflowOpen) return
     const onKey = (e: KeyboardEvent) => {
@@ -3981,7 +3991,7 @@ export default function App() {
       const p = providers.find((x) => x.id === s.activeProviderId) ?? providers[0]
       setAiConfigured(Boolean(p?.baseURL && hasUsableKey(p.baseURL, p.apiKey) && s?.model))
     }).catch(() => setAiConfigured(false))
-  }, [layout.showAi, inspectOpen])
+  }, [visibleLayout.showAi, inspectOpen])
 
   useEffect(() => {
     const sync = () => setSmartOn(loadSmartPrefs().enabled)
@@ -5964,7 +5974,7 @@ export default function App() {
         return
       }
       if (action === 'focusAiPanel') {
-        const wasHidden = !layout.showAi
+        const wasHidden = !visibleLayout.showAi
         updateLayout((p) => withPaneToggle(p, 'ai', true))
         setRightPane('ai')
         if (wasHidden) showToast(tg('ai.focusShortcutTip'))
@@ -6575,7 +6585,7 @@ export default function App() {
         return
       }
       if (action === 'openAi') {
-        const wasHidden = !layout.showAi
+        const wasHidden = !visibleLayout.showAi
         updateLayout((p) => withPaneToggle(p, 'ai', true))
         openRightPanelRef.current('ai')
         if (wasHidden) showToast(tg('ai.focusShortcutTip'))
@@ -6992,7 +7002,7 @@ export default function App() {
       locale,
       setLocale,
       terminalPrefs,
-      layout.showAi,
+      visibleLayout.showAi,
       runUpdateCheck,
       sftpComfort,
       reconnectTab,
@@ -8186,9 +8196,9 @@ export default function App() {
         updateVersion={updateInfo?.version ?? null}
         onOpenUpdate={() => setUpdateModalOpen(true)}
         toggles={{
-          toggleSidebar: layout.showSidebar,
-          toggleMain: layout.showMain,
-          toggleAi: layout.showAi,
+          toggleSidebar: visibleLayout.showSidebar,
+          toggleMain: visibleLayout.showMain,
+          toggleAi: visibleLayout.showAi,
           toggleSplit: splitEnabled,
           toggleHostStatus: showHostStatus,
           toggleMuteBell: (terminalPrefs ?? TERMINAL_PREFS_DEFAULTS).muteBell,
@@ -8257,9 +8267,9 @@ export default function App() {
       ) : null}
 
       <div className="app-shell">
-        {layout.showSidebar ? (
+        {visibleLayout.showSidebar ? (
           <>
-            <aside className="sidebar" style={{ width: layout.sidebarWidth, minWidth: layout.sidebarWidth }}>
+            <aside className="sidebar" style={{ width: visibleLayout.sidebarWidth, minWidth: visibleLayout.sidebarWidth }}>
               <div className="sidebar-header">
                 <h3>{tr('sidebar.saved')}</h3>
                 <SessionSearchBar
@@ -8487,14 +8497,14 @@ export default function App() {
                 ) : null}
               </div>
             </aside>
-            {layout.showMain ? (
+            {visibleLayout.showMain ? (
               <LayoutResizer
                 title={tg('app.dragLeft')}
                 onDrag={(dx) =>
                   updateLayout((p) => ({ ...p, sidebarWidth: clampSidebarWidth(p.sidebarWidth + dx) }))
                 }
               />
-            ) : layout.showAi ? (
+            ) : visibleLayout.showAi ? (
               <LayoutResizer
                 title={tg('app.dragResize')}
                 onDrag={(dx) =>
@@ -8509,7 +8519,7 @@ export default function App() {
           </>
         ) : null}
 
-        {layout.showMain ? (
+        {visibleLayout.showMain ? (
           <section className="main">
           <div className="tab-bar" ref={tabBarRef}>
             <button
@@ -10465,15 +10475,15 @@ export default function App() {
         </section>
         ) : null}
 
-        {layout.showMain && layout.showAi ? (
+        {visibleLayout.showMain && visibleLayout.showAi ? (
           <LayoutResizer
             title={tg('app.dragAi')}
             onDrag={(dx) => updateLayout((p) => ({ ...p, aiWidth: clampAiWidth(p.aiWidth - dx) }))}
           />
         ) : null}
 
-        {layout.showAi ? (
-          <div className="ai-panel-shell" style={{ width: layout.aiWidth, minWidth: layout.aiWidth }} data-testid="right-panel" data-pane={rightPane}>
+        {visibleLayout.showAi ? (
+          <div className="ai-panel-shell" style={{ width: visibleLayout.aiWidth, minWidth: visibleLayout.aiWidth }} data-testid="right-panel" data-pane={rightPane}>
             <div className="right-pane-tabs" role="tablist" data-testid="right-pane-tabs">
               <button
                 type="button"
@@ -10748,7 +10758,7 @@ export default function App() {
                   {quiet}
                 </span>
               ) : null}
-              {aiPending && (!layout.showAi || rightPane !== 'ai') ? (
+              {aiPending && (!visibleLayout.showAi || rightPane !== 'ai') ? (
                 <button
                   type="button"
                   className="statusbar-slot statusbar-slot--ai-pending"

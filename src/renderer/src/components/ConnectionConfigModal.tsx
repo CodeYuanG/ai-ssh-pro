@@ -194,6 +194,29 @@ export default function ConnectionConfigModal({
     setAuthModeState(authModeExternal)
   }, [authModeExternal, authMode])
 
+  // UX-W02: Escape closes the connection editor, matching the command palette
+  // and QuickPick convention. Ignore keys while a portal popover (Select,
+  // DateField, context menu) is open so Escape first dismisses that layer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const inPopover =
+        document.querySelector('.modal-backdrop') ||
+        document.querySelector('.cmdp-backdrop') ||
+        document.querySelector('.ctx-menu-root') ||
+        document.querySelector('.datefield-pop') ||
+        document.querySelector('.ui-select-pop')
+      if (inPopover) return
+      const root = document.querySelector('.conn-form-ux25')
+      // Only handle when this editor is the active (visible) terminal layer.
+      if (root && !root.closest('.terminal-layer.active')) return
+      e.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
     <div className="workspace-panel workspace-panel--editor conn-form-ux25">
       <PanelHeader

@@ -285,9 +285,19 @@ export default function AlertWorkbenchTab({
     setLocateError(null)
     const target = locateTargetFor(alert.ruleId)
     const label = target.kind === 'toolbox' ? t(TARGET_KEY[target.tab]) : t('l2.openTerminal')
+    // UX-W06: an offline host cannot be live-inspected. Say so up front and
+    // make the action explicit instead of silently navigating and then showing
+    // a contradictory "navigated" badge.
+    const offline = !onlineIds.has(alert.hostKey) && target.kind !== 'terminal'
     try {
-      if (!onlineIds.has(alert.hostKey) && target.kind !== 'terminal') {
+      if (offline) {
         setLocateError(t('l2.offlineHost'))
+        // Still open the view so the user can connect from there, but do not
+        // claim a successful live locate.
+        onLocate(alert)
+        markLoop(alert.id, 'locate')
+        window.dispatchEvent(new Event('aiss-loop-mark'))
+        return
       }
       onLocate(alert)
       markLoop(alert.id, 'locate')
@@ -562,9 +572,14 @@ export default function AlertWorkbenchTab({
                 <Button variant="primary"
                   data-testid="l2-locate"
                   disabled={locating}
+                  title={selected && !onlineIds.has(selected.hostKey) ? t('l2.offlineHost') : undefined}
                   onClick={() => doLocate(selected)}
                 >
-                  {locating ? t('l2.connecting', { host: selected.hostTitle }) : t('l2.locate')}
+                  {locating
+                    ? t('l2.connecting', { host: selected.hostTitle })
+                    : selected && !onlineIds.has(selected.hostKey)
+                      ? t('l2.locateOffline')
+                      : t('l2.locate')}
                 </Button>
                 <button type="button" title={t('l2.openTerminal')} onClick={() => onOpenTerminal(selected)}>
                   <Icon name="keyboard" size={14} />

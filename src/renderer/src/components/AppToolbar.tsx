@@ -275,7 +275,10 @@ export default function AppToolbar({
           {OPS_BUTTONS.map((b) => {
             const dim = b.needsSession && !hasSession
             const keys = keysFor(b.id)
-            const title = dim ? t('pf7.connectFirst') : `${t(b.title)}${keys ? ` (${keys})` : ''}`
+            // UX-W04: keep the function name even when disabled; append the
+            // reason instead of replacing the name, so icon-only (narrow)
+            // buttons remain identifiable via tooltip.
+            const title = `${t(b.title)}${keys ? ` (${keys})` : ''}${dim ? ` — ${t('pf7.connectFirst')}` : ''}`
             return (
               <button
                 key={b.id}
