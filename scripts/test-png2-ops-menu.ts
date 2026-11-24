@@ -138,9 +138,9 @@ const toolbar = readFileSync('src/renderer/src/components/AppToolbar.tsx', 'utf8
 const opsStart = toolbar.indexOf('OPS_BUTTONS')
 const opsEnd = toolbar.indexOf(']', opsStart)
 const opsButtons = toolbar.slice(opsStart, opsEnd)
-// Resource monitor now lives inside the ops workbench as its 概览 tab, so the
-// titlebar keeps two primary ops buttons (workbench + SFTP).
-assert.equal((opsButtons.match(/id: '/g) ?? []).length, 2, 'no new toolbar primary')
+// Titlebar primaries: ops home, ops workbench, SFTP. The resource monitor lives
+// inside the workbench as its 概览 tab.
+assert.equal((opsButtons.match(/id: '/g) ?? []).length, 3, 'no new toolbar primary')
 assert.equal(opsButtons.includes('runPlaybook'), false)
 assert.equal(opsButtons.includes('alertRules'), false)
 
