@@ -229,17 +229,15 @@ fn interactive_re() -> &'static Regex {
 fn is_read_bin(bin: &str) -> bool {
     matches!(
         bin,
-        "ls" | "ll" | "dir" | "cat" | "tac" | "head" | "tail" | "df" | "du" | "free" | "uptime"
-            | "pwd" | "whoami" | "id" | "uname" | "date" | "hostname" | "echo" | "printf" | "ps"
-            | "pgrep" | "pstree" | "grep" | "egrep" | "fgrep" | "rg" | "wc" | "true" | "false"
+        "ls" | "ll" | "dir" | "cat" | "tac" | "head" | "df" | "du" | "free" | "uptime"
+            | "pwd" | "whoami" | "id" | "uname" | "echo" | "ps"
+            | "pgrep" | "pstree" | "grep" | "egrep" | "fgrep" | "wc" | "true" | "false"
             | "which" | "whereis" | "type" | "file" | "stat" | "readlink" | "realpath" | "basename"
-            | "dirname" | "env" | "printenv" | "who" | "w" | "last" | "lastlog" | "lsblk" | "lscpu"
-            | "lsmem" | "lsmod" | "lsusb" | "lspci" | "dmesg" | "mount" | "findmnt" | "journalctl"
-            | "dmidecode" | "vmstat" | "iostat" | "mpstat" | "sar" | "lsof" | "ss" | "netstat"
-            | "ping" | "traceroute" | "tracepath" | "dig" | "nslookup" | "host" | "getent"
-            | "timedatectl" | "hostnamectl" | "localectl" | "loginctl" | "nproc" | "arch"
-            | "lsb_release" | "swapon" | "blkid" | "find" | "awk" | "cut" | "sort" | "uniq" | "tr"
-            | "column" | "nl" | "od" | "hexdump" | "sha256sum" | "md5sum" | "ip" | "ifconfig"
+            | "dirname" | "printenv" | "who" | "w" | "last" | "lastlog" | "lsblk" | "lscpu"
+            | "lsmem" | "lsmod" | "lsusb" | "lspci" | "findmnt" | "dmidecode" | "vmstat" | "iostat"
+            | "mpstat" | "lsof" | "ss" | "netstat" | "traceroute" | "tracepath"
+            | "dig" | "host" | "getent" | "nproc" | "arch" | "lsb_release"
+            | "cut" | "uniq" | "tr" | "column" | "nl" | "od" | "hexdump" | "sha256sum" | "md5sum"
     )
 }
 
@@ -251,26 +249,283 @@ fn is_systemctl_read(sub: &str) -> bool {
     )
 }
 
-fn is_git_read(sub: &str) -> bool {
-    matches!(
-        sub,
-        "status" | "log" | "diff" | "show" | "rev-parse" | "branch" | "remote" | "ls-files" | "describe"
+fn has_unverifiable_shell_syntax(command: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"[\r\n]|\$\(|`|<\(|>\(|\$\{[^}]*@P[^}]*\}").unwrap())
+        .is_match(command)
+}
+
+fn has_arg(parts: &[&str], exact: &[&str], prefixes: &[&str]) -> bool {
+    parts.iter().skip(1).any(|p| exact.contains(p) || prefixes.iter().any(|prefix| p.starts_with(prefix)))
+}
+
+fn is_git_read(parts: &[&str]) -> bool {
+    let Some(sub) = parts.get(1).copied() else {
+        return false;
+    };
+    match sub {
+        "status" | "ls-files" | "rev-parse" | "describe" => true,
+        "log" | "diff" | "show" => !has_arg(
+            parts,
+            &["--output", "--ext-diff", "--textconv"],
+            &["--output="],
+        ),
+        "branch" => parts.iter().skip(2).all(|p| {
+            matches!(
+                *p,
+                "--list" | "-l" | "--all" | "-a" | "--remotes" | "-r" | "--verbose" | "-v" | "--show-current"
+            )
+        }),
+        "remote" => {
+            parts.len() == 2
+                || (parts.len() == 3 && matches!(parts[2], "-v" | "--verbose"))
+        }
+        _ => false,
+    }
+}
+
+fn docker_logs_follow(parts: &[&str]) -> bool {
+    has_arg(parts, &["--follow"], &["--follow=", "-f"])
+}
+
+fn is_docker_read(parts: &[&str]) -> bool {
+    let sub = parts.get(1).copied().unwrap_or("");
+    match sub {
+        "ps" | "images" | "inspect" | "version" | "info" => true,
+        "logs" => !docker_logs_follow(parts),
+        "image" => matches!(parts.get(2).copied(), Some("ls" | "inspect" | "history")),
+        "container" => {
+            let action = parts.get(2).copied().unwrap_or("");
+            if matches!(action, "ls" | "inspect" | "top" | "port" | "diff") {
+                true
+            } else if action == "logs" {
+                !docker_logs_follow(parts)
+            } else {
+                action == "stats" && parts.contains(&"--no-stream")
+            }
+        }
+        _ => false,
+    }
+}
+
+fn is_ip_read(parts: &[&str]) -> bool {
+    let mut i = 1;
+    while let Some(p) = parts.get(i).copied() {
+        if !p.starts_with('-') {
+            break;
+        }
+        if !matches!(
+            p,
+            "-4" | "-6" | "-o" | "-s" | "-b" | "-br" | "-oneline" | "-brief" | "-stats" | "-statistics"
+        ) {
+            return false;
+        }
+        i += 1;
+    }
+    let object = parts.get(i).copied().unwrap_or("");
+    if !matches!(object, "addr" | "address" | "link" | "route" | "rule" | "neigh" | "maddress") {
+        return false;
+    }
+    match parts.get(i + 1).copied() {
+        None => true,
+        Some("show" | "list") => true,
+        Some("get") => matches!(object, "route" | "neigh"),
+        _ => false,
+    }
+}
+
+fn is_ifconfig_read(parts: &[&str]) -> bool {
+    let mut interfaces = 0;
+    for p in parts.iter().skip(1) {
+        if p.starts_with('-') {
+            if !matches!(*p, "-a" | "-s" | "-v" | "--all" | "--verbose") {
+                return false;
+            }
+        } else {
+            interfaces += 1;
+        }
+    }
+    interfaces <= 1
+}
+
+fn is_mount_read(parts: &[&str]) -> bool {
+    parts.iter().skip(1).all(|p| matches!(*p, "-l" | "--show-labels" | "-v" | "--verbose"))
+}
+
+fn is_swapon_read(parts: &[&str]) -> bool {
+    parts.iter().skip(1).all(|p| matches!(*p, "--show" | "-s" | "--bytes" | "--noheadings" | "--raw"))
+}
+
+fn is_hostname_read(parts: &[&str]) -> bool {
+    parts.iter().skip(1).all(|p| {
+        matches!(
+            *p,
+            "-I" | "-i" | "-s" | "-f" | "-d" | "-a" | "-A" | "-y" | "--help" | "--version"
+        )
+    })
+}
+
+fn is_hostnamectl_read(parts: &[&str]) -> bool {
+    match parts.get(1).copied() {
+        None => true,
+        Some(sub) => parts.len() == 2 && matches!(sub, "status" | "--help" | "--version"),
+    }
+}
+
+fn is_timedatectl_read(parts: &[&str]) -> bool {
+    match parts.get(1).copied() {
+        None => true,
+        Some(sub) => parts.len() == 2 && matches!(
+            sub,
+            "status" | "show" | "list-timezones" | "timesync-status" | "show-timesync"
+        ),
+    }
+}
+
+fn is_localectl_read(parts: &[&str]) -> bool {
+    match parts.get(1).copied() {
+        None => true,
+        Some(sub) => parts.len() == 2 && matches!(
+            sub,
+            "status" | "list-locales" | "list-keymaps" | "list-x11-keymap-models"
+        ),
+    }
+}
+
+fn is_loginctl_read(parts: &[&str]) -> bool {
+    match parts.get(1).copied() {
+        None => true,
+        Some(sub) => matches!(
+            sub,
+            "list-sessions" | "list-users" | "user-status" | "session-status" | "show-user" | "show-session"
+        ),
+    }
+}
+
+fn is_journalctl_read(parts: &[&str]) -> bool {
+    !has_arg(
+        parts,
+        &[
+            "--rotate",
+            "--flush",
+            "--sync",
+            "--update-catalog",
+            "-f",
+        ],
+        &["--vacuum", "--relinquish-var", "--follow"],
     )
 }
 
-fn is_docker_read(sub: &str) -> bool {
-    matches!(sub, "ps" | "images" | "image" | "inspect" | "logs" | "version" | "info")
+fn is_dmesg_read(parts: &[&str]) -> bool {
+    !has_arg(
+        parts,
+        &["--clear", "-C", "-c", "--console-level", "--follow", "-w"],
+        &["--console-level="],
+    )
 }
 
-fn strip_sudo(s: &str) -> &str {
+fn is_sed_read(parts: &[&str]) -> bool {
+    let args = parts.iter().skip(1).copied().collect::<Vec<_>>();
+    let Some(script_index) = args.iter().position(|p| !p.starts_with('-')) else {
+        return false;
+    };
+    if !args[..script_index].iter().all(|p| {
+        matches!(
+            *p,
+            "-n" | "--quiet" | "--silent" | "-E" | "-r" | "--regexp-extended" | "-nE" | "-En"
+        )
+    }) {
+        return false;
+    }
+    if args[script_index + 1..].iter().any(|p| p.starts_with('-')) {
+        return false;
+    }
+    static SCRIPT: OnceLock<Regex> = OnceLock::new();
+    let quoted = args[script_index];
+    let script = if quoted.len() >= 2
+        && ((quoted.starts_with('\'') && quoted.ends_with('\''))
+            || (quoted.starts_with('"') && quoted.ends_with('"')))
+    {
+        &quoted[1..quoted.len() - 1]
+    } else {
+        quoted
+    };
+    script.contains('p')
+        && SCRIPT
+            .get_or_init(|| Regex::new(r"^[0-9,$%p;\s-]+$").unwrap())
+            .is_match(script)
+}
+
+fn is_find_read(body: &str) -> bool {
+    static WRITE_ACTIONS: OnceLock<Regex> = OnceLock::new();
+    !WRITE_ACTIONS
+        .get_or_init(|| Regex::new(r"\s-(?:delete|exec(?:dir)?|ok(?:dir)?|fls|fprint(?:0)?|fprintf)\b").unwrap())
+        .is_match(body)
+}
+
+fn is_sort_read(parts: &[&str]) -> bool {
+    !has_arg(
+        parts,
+        &["--output", "--compress-program", "--temporary-directory"],
+        &["-o", "--output=", "--compress-program=", "-T", "--temporary-directory="],
+    )
+}
+
+fn is_rg_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &["--pre", "--hostname-bin"], &["--pre=", "--hostname-bin="])
+}
+
+fn is_tail_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &[], &["-f", "-F", "--follow", "--retry"])
+}
+
+fn is_date_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &[], &["-s", "--set"])
+}
+
+fn is_printf_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &[], &["-v"])
+}
+
+fn is_sar_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &[], &["-o"])
+}
+
+fn is_ping_read(parts: &[&str]) -> bool {
+    !has_arg(
+        parts,
+        &[],
+        &["-f", "-l", "-s", "-i", "--flood", "--preload", "--size", "--interval"],
+    )
+}
+
+fn is_blkid_read(parts: &[&str]) -> bool {
+    !has_arg(parts, &["-g"], &["--garbage-collect"])
+}
+
+fn strip_sudo(s: &str) -> String {
     let t = s.trim_start();
-    if t == "sudo" {
-        return "";
+    let parts = t.split_whitespace().collect::<Vec<_>>();
+    if parts.first().copied() != Some("sudo") {
+        return t.to_string();
     }
-    if let Some(rest) = t.strip_prefix("sudo ") {
-        return rest.trim_start();
+    let mut i = 1;
+    while i < parts.len() {
+        let p = parts[i];
+        if matches!(p, "-u" | "-g" | "--user" | "--group") {
+            i += 2;
+            continue;
+        }
+        if p.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        break;
     }
-    t
+    if i >= parts.len() {
+        return t.to_string();
+    }
+    parts[i..].join(" ")
 }
 
 fn redirect_is_write(segment: &str) -> bool {
@@ -285,6 +540,13 @@ fn redirect_is_write(segment: &str) -> bool {
         }
         return true;
     }
+    let both = Regex::new(r">\s*&\s+(\S+)").unwrap();
+    for cap in both.captures_iter(segment) {
+        let target = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        if !matches!(target, "/dev/null" | "/dev/stdout" | "/dev/stderr") {
+            return true;
+        }
+    }
     segment.split_whitespace().any(|p| p == "tee" || p.ends_with("/tee"))
 }
 
@@ -293,34 +555,100 @@ fn is_read_segment(segment: &str) -> bool {
     if body.is_empty() {
         return true;
     }
-    if redirect_is_write(body) {
+    if redirect_is_write(&body) {
         return false;
     }
-    let parts: Vec<&str> = body.split_whitespace().collect();
+    let parts = body.split_whitespace().collect::<Vec<_>>();
     let bin = parts.first().copied().unwrap_or("");
     let sub = parts.get(1).copied().unwrap_or("");
     match bin {
-        "systemctl" | "service" => {
-            if bin == "service" {
-                sub == "status" || parts.get(2).copied() == Some("status")
-            } else {
-                is_systemctl_read(sub)
-            }
-        }
-        "git" => is_git_read(sub),
-        "docker" | "podman" => is_docker_read(sub),
-        "sed" => !Regex::new(r"(^|\s)-[^\s]*i").unwrap().is_match(body),
-        "find" => !Regex::new(r"\s-(?:delete|exec|ok|fprint)\b").unwrap().is_match(body),
-        "du" => !body.contains("--delete"),
+        "systemctl" => is_systemctl_read(sub),
+        "service" => sub == "status" || parts.get(2).copied() == Some("status"),
+        "git" => is_git_read(&parts),
+        "docker" | "podman" => is_docker_read(&parts),
+        "ip" => is_ip_read(&parts),
+        "ifconfig" => is_ifconfig_read(&parts),
+        "mount" => is_mount_read(&parts),
+        "swapon" => is_swapon_read(&parts),
+        "hostname" => is_hostname_read(&parts),
+        "hostnamectl" => is_hostnamectl_read(&parts),
+        "timedatectl" => is_timedatectl_read(&parts),
+        "localectl" => is_localectl_read(&parts),
+        "loginctl" => is_loginctl_read(&parts),
+        "journalctl" => is_journalctl_read(&parts),
+        "dmesg" => is_dmesg_read(&parts),
+        "tail" => is_tail_read(&parts),
+        "date" => is_date_read(&parts),
+        "printf" => is_printf_read(&parts),
+        "sar" => is_sar_read(&parts),
+        "ping" => is_ping_read(&parts),
+        "blkid" => is_blkid_read(&parts),
+        "sed" => is_sed_read(&parts),
+        "find" => is_find_read(&body),
+        "du" => !Regex::new(r"\s--delete\b").unwrap().is_match(&body),
+        "sort" => is_sort_read(&parts),
+        "rg" => is_rg_read(&parts),
         _ => is_read_bin(bin),
     }
 }
 
 fn split_segments(text: &str) -> Vec<String> {
-    text.split(|c| c == ';' || c == '&' || c == '|')
-        .map(str::trim)
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if ch == '\\' && quote != Some('\'') {
+            current.push(ch);
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if let Some(q) = quote {
+            current.push(ch);
+            if ch == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            current.push(ch);
+            i += 1;
+            continue;
+        }
+        if (ch == '&' && next == Some('&')) || (ch == '|' && next == Some('|')) {
+            segments.push(std::mem::take(&mut current));
+            i += 2;
+            continue;
+        }
+        if ch == ';'
+            || ch == '|'
+            || (ch == '&' && chars.get(i.saturating_sub(1)) != Some(&'>') && next != Some('>'))
+        {
+            segments.push(std::mem::take(&mut current));
+            i += 1;
+            continue;
+        }
+        current.push(ch);
+        i += 1;
+    }
+    segments.push(current);
+    segments
+        .into_iter()
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .map(str::to_string)
         .collect()
 }
 
@@ -397,6 +725,9 @@ pub fn classify_command(command: &str, risk_level: Option<&str>) -> CommandKind 
     let text = command.trim();
     if text.is_empty() {
         return CommandKind::Write;
+    }
+    if has_unverifiable_shell_syntax(text) {
+        return CommandKind::High;
     }
     if interactive_re().is_match(text) {
         return CommandKind::Interactive;
@@ -532,6 +863,84 @@ pub fn bump_auto_write_streak(streak: u32, kind: CommandKind) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Deserialize)]
+    struct CommandFixture {
+        version: u32,
+        cases: Vec<CommandCase>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CommandCase {
+        id: String,
+        command: String,
+        kind: String,
+        risk_level: Option<String>,
+    }
+
+    fn fixture_kind(value: &str) -> CommandKind {
+        match value {
+            "read" => CommandKind::Read,
+            "write" => CommandKind::Write,
+            "high" => CommandKind::High,
+            "interactive" => CommandKind::Interactive,
+            _ => panic!("unknown command kind: {value}"),
+        }
+    }
+
+    fn fixture_mode(policy: AiPolicy, kind: CommandKind) -> SafetyMode {
+        match (policy, kind) {
+            (_, CommandKind::Read) => SafetyMode::Auto,
+            (AiPolicy::Suggest, _) => SafetyMode::Suggest,
+            (AiPolicy::Ask, CommandKind::High) => SafetyMode::Strong,
+            (AiPolicy::Ask, _) => SafetyMode::Agree,
+            (AiPolicy::Auto, CommandKind::High | CommandKind::Interactive) => SafetyMode::Agree,
+            (AiPolicy::Auto, CommandKind::Write) => SafetyMode::Auto,
+        }
+    }
+
+    #[test]
+    fn shared_command_fixture_matches_typescript_policy() {
+        let fixture: CommandFixture = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ai-command-safety.json"
+        ))
+        .expect("valid shared command fixture");
+        assert_eq!(fixture.version, 1);
+        assert!(fixture.cases.len() >= 90);
+        for row in fixture.cases {
+            let risk = row.risk_level.as_deref().unwrap_or("medium");
+            let expected_kind = fixture_kind(&row.kind);
+            assert_eq!(
+                classify_command(&row.command, Some(risk)),
+                expected_kind,
+                "{}: kind",
+                row.id
+            );
+            for policy in [AiPolicy::Ask, AiPolicy::Auto, AiPolicy::Suggest] {
+                let resolved = resolve_policy(
+                    policy,
+                    false,
+                    &SafetyContext::default(),
+                    HostProtection::default(),
+                );
+                let decision = decide_safety_gate(
+                    &row.command,
+                    Some(risk),
+                    &resolved,
+                    HostProtection::default(),
+                    false,
+                );
+                assert_eq!(decision.kind, expected_kind, "{}: {policy:?} kind", row.id);
+                assert_eq!(
+                    decision.mode,
+                    fixture_mode(policy, expected_kind),
+                    "{}: {policy:?} mode",
+                    row.id
+                );
+            }
+        }
+    }
 
     #[test]
     fn reads_are_read_kind() {

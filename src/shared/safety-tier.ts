@@ -61,24 +61,175 @@ const INTERACTIVE =
   /(?:^|[;&|]\s*)(?:sudo(?:\s+-[\w-]+|\s+--\S+|\s+-u\s+\S+)*\s+)?(?:ncdu|htop|btop|atop|nmon|iotop|iftop|nmtui|nvim|vim|vi|nano|emacs|less|more|most|watch|man|tmux|screen|ranger|mc|top)\b/
 
 const READ_BIN = new Set([
-  'ls', 'll', 'dir', 'cat', 'tac', 'head', 'tail', 'df', 'du', 'free', 'uptime', 'pwd', 'whoami', 'id',
-  'uname', 'date', 'hostname', 'echo', 'printf', 'ps', 'pgrep', 'pstree', 'grep', 'egrep', 'fgrep', 'rg',
+  'ls', 'll', 'dir', 'cat', 'tac', 'head', 'df', 'du', 'free', 'uptime', 'pwd', 'whoami', 'id',
+  'uname', 'echo', 'ps', 'pgrep', 'pstree', 'grep', 'egrep', 'fgrep',
   'wc', 'true', 'false', 'which', 'whereis', 'type', 'file', 'stat', 'readlink', 'realpath', 'basename',
-  'dirname', 'env', 'printenv', 'who', 'w', 'last', 'lastlog', 'lsblk', 'lscpu', 'lsmem', 'lsmod', 'lsusb',
-  'lspci', 'dmesg', 'mount', 'findmnt', 'journalctl', 'dmidecode', 'vmstat', 'iostat', 'mpstat', 'sar',
-  'lsof', 'ss', 'netstat', 'ping', 'traceroute', 'tracepath', 'dig', 'nslookup', 'host', 'getent',
-  'timedatectl', 'hostnamectl', 'localectl', 'loginctl', 'nproc', 'arch', 'lsb_release', 'swapon', 'blkid',
-  'find', 'awk', 'cut', 'sort', 'uniq', 'tr', 'column', 'nl', 'od', 'hexdump', 'sha256sum', 'md5sum',
-  'ip', 'ifconfig'
+  'dirname', 'printenv', 'who', 'w', 'last', 'lastlog', 'lsblk', 'lscpu', 'lsmem', 'lsmod', 'lsusb',
+  'lspci', 'findmnt', 'dmidecode', 'vmstat', 'iostat', 'mpstat', 'lsof', 'ss', 'netstat',
+  'traceroute', 'tracepath', 'dig', 'host', 'getent', 'nproc', 'arch', 'lsb_release',
+  'cut', 'uniq', 'tr', 'column', 'nl', 'od', 'hexdump', 'sha256sum', 'md5sum'
 ])
 
 const SYSTEMCTL_READ = new Set([
   'status', 'is-active', 'is-enabled', 'is-failed', 'show', 'list-units', 'list-unit-files', 'cat', 'help', '--version'
 ])
 
-const GIT_READ = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'branch', 'remote', 'ls-files', 'describe'])
+function hasUnverifiableShellSyntax(command: string): boolean {
+  return /[\r\n]/.test(command) || /\$\(|`|<\(|>\(|\$\{[^}]*@P[^}]*\}/.test(command)
+}
 
-const DOCKER_READ = new Set(['ps', 'images', 'image', 'inspect', 'logs', 'version', 'info'])
+function isGitRead(parts: string[]): boolean {
+  const sub = parts[1]
+  if (sub === 'status' || sub === 'ls-files' || sub === 'rev-parse' || sub === 'describe') return true
+  if (sub === 'log' || sub === 'diff' || sub === 'show') {
+    return !parts.some((p) => p === '--output' || p.startsWith('--output=') || p === '--ext-diff' || p === '--textconv')
+  }
+  if (sub === 'branch') {
+    return parts.slice(2).every((p) => ['--list', '-l', '--all', '-a', '--remotes', '-r', '--verbose', '-v', '--show-current'].includes(p))
+  }
+  return sub === 'remote' && (parts.length === 2 || (parts.length === 3 && (parts[2] === '-v' || parts[2] === '--verbose')))
+}
+
+function isDockerRead(parts: string[]): boolean {
+  const sub = parts[1]
+  if (sub === 'ps' || sub === 'images' || sub === 'inspect' || sub === 'version' || sub === 'info') return true
+  if (sub === 'logs') return !parts.some((p) => p === '--follow' || p.startsWith('--follow=') || p.startsWith('-f'))
+  if (sub === 'image') return parts[2] === 'ls' || parts[2] === 'inspect' || parts[2] === 'history'
+  if (sub === 'container') {
+    if (parts[2] === 'ls' || parts[2] === 'inspect' || parts[2] === 'top' || parts[2] === 'port' || parts[2] === 'diff') return true
+    if (parts[2] === 'logs') return !parts.some((p) => p === '--follow' || p.startsWith('--follow=') || p.startsWith('-f'))
+    return parts[2] === 'stats' && parts.includes('--no-stream')
+  }
+  return false
+}
+
+function isIpRead(parts: string[]): boolean {
+  let i = 1
+  while (parts[i]?.startsWith('-')) {
+    if (!['-4', '-6', '-o', '-s', '-b', '-br', '-oneline', '-brief', '-stats', '-statistics'].includes(parts[i])) return false
+    i += 1
+  }
+  const object = parts[i]
+  if (!object || !['addr', 'address', 'link', 'route', 'rule', 'neigh', 'maddress'].includes(object)) return false
+  const action = parts[i + 1]
+  return action === undefined || action === 'show' || action === 'list' || ((object === 'route' || object === 'neigh') && action === 'get')
+}
+
+function isIfconfigRead(parts: string[]): boolean {
+  let interfaces = 0
+  for (const p of parts.slice(1)) {
+    if (p.startsWith('-')) {
+      if (!['-a', '-s', '-v', '--all', '--verbose'].includes(p)) return false
+    } else {
+      interfaces += 1
+    }
+  }
+  return interfaces <= 1
+}
+
+function isMountRead(parts: string[]): boolean {
+  return parts.slice(1).every((p) => ['-l', '--show-labels', '-v', '--verbose'].includes(p))
+}
+
+function isSwaponRead(parts: string[]): boolean {
+  return parts.slice(1).every((p) => ['--show', '-s', '--bytes', '--noheadings', '--raw'].includes(p))
+}
+
+function isHostnameRead(parts: string[]): boolean {
+  return parts.slice(1).every((p) => ['-I', '-i', '-s', '-f', '-d', '-a', '-A', '-y', '--help', '--version'].includes(p))
+}
+
+function isHostnamectlRead(parts: string[]): boolean {
+  const sub = parts[1]
+  return sub === undefined || (parts.length === 2 && ['status', '--help', '--version'].includes(sub))
+}
+
+function isTimedatectlRead(parts: string[]): boolean {
+  const sub = parts[1]
+  return sub === undefined || (parts.length === 2 && ['status', 'show', 'list-timezones', 'timesync-status', 'show-timesync'].includes(sub))
+}
+
+function isLocalectlRead(parts: string[]): boolean {
+  const sub = parts[1]
+  return sub === undefined || (parts.length === 2 && ['status', 'list-locales', 'list-keymaps', 'list-x11-keymap-models'].includes(sub))
+}
+
+function isLoginctlRead(parts: string[]): boolean {
+  const sub = parts[1]
+  return sub === undefined || ['list-sessions', 'list-users', 'user-status', 'session-status', 'show-user', 'show-session'].includes(sub)
+}
+
+function isJournalctlRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) =>
+    p === '--rotate' || p.startsWith('--vacuum') || p === '--flush' || p === '--sync' ||
+    p === '--update-catalog' || p.startsWith('--relinquish-var') ||
+    p === '-f' || p.startsWith('--follow')
+  )
+}
+
+function isDmesgRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) =>
+    p === '--clear' || p === '-C' || p === '-c' || p === '--console-level' || p.startsWith('--console-level=') ||
+    p === '--follow' || p === '-w'
+  )
+}
+
+function isSedRead(parts: string[]): boolean {
+  const args = parts.slice(1)
+  const scriptIndex = args.findIndex((p) => !p.startsWith('-'))
+  if (scriptIndex < 0) return false
+  const options = args.slice(0, scriptIndex)
+  if (!options.every((p) => ['-n', '--quiet', '--silent', '-E', '-r', '--regexp-extended', '-nE', '-En'].includes(p))) return false
+  if (args.slice(scriptIndex + 1).some((p) => p.startsWith('-'))) return false
+  const quoted = args[scriptIndex]
+  const script = quoted.length >= 2 && (
+    (quoted.startsWith("'") && quoted.endsWith("'")) ||
+    (quoted.startsWith('"') && quoted.endsWith('"'))
+  ) ? quoted.slice(1, -1) : quoted
+  return script.includes('p') && /^[0-9,$%p;\s-]+$/.test(script)
+}
+
+function isFindRead(body: string): boolean {
+  return !/\s-(?:delete|exec(?:dir)?|ok(?:dir)?|fls|fprint(?:0)?|fprintf)\b/.test(body)
+}
+
+function isSortRead(parts: string[]): boolean {
+  return !parts.some((p) =>
+    p.startsWith('-o') || p === '--output' || p.startsWith('--output=') ||
+    p === '--compress-program' || p.startsWith('--compress-program=') ||
+    p.startsWith('-T') || p === '--temporary-directory' || p.startsWith('--temporary-directory=')
+  )
+}
+
+function isRgRead(parts: string[]): boolean {
+  return !parts.some((p) => p === '--pre' || p.startsWith('--pre=') || p === '--hostname-bin' || p.startsWith('--hostname-bin='))
+}
+
+function isTailRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) => p.startsWith('-f') || p.startsWith('-F') || p.startsWith('--follow') || p.startsWith('--retry'))
+}
+
+function isDateRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) => p.startsWith('-s') || p.startsWith('--set'))
+}
+
+function isPrintfRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) => p.startsWith('-v'))
+}
+
+function isSarRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) => p.startsWith('-o'))
+}
+
+function isPingRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) =>
+    ['-f', '-l', '-s', '-i', '--flood', '--preload', '--size', '--interval'].some((flag) => p.startsWith(flag))
+  )
+}
+
+function isBlkidRead(parts: string[]): boolean {
+  return !parts.slice(1).some((p) => p === '-g' || p.startsWith('--garbage-collect'))
+}
 
 export function isSafetyTier(value: unknown): value is SafetyTier {
   return typeof value === 'string' && (SAFETY_TIERS as readonly string[]).includes(value)
@@ -191,14 +342,53 @@ function stripSudo(segment: string): string {
     }
     break
   }
+  if (i >= parts.length) return s
   return parts.slice(i).join(' ')
 }
 
 function splitSegments(command: string): string[] {
-  return command
-    .split(/\s*(?:&&|\|\||[|;])\s*/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const segments: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]
+    const next = command[i + 1]
+    if (escaped) {
+      current += ch
+      escaped = false
+      continue
+    }
+    if (ch === '\\' && quote !== "'") {
+      current += ch
+      escaped = true
+      continue
+    }
+    if (quote) {
+      current += ch
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      current += ch
+      continue
+    }
+    if ((ch === '&' && next === '&') || (ch === '|' && next === '|')) {
+      segments.push(current)
+      current = ''
+      i += 1
+      continue
+    }
+    if (ch === ';' || ch === '|' || (ch === '&' && command[i - 1] !== '>' && next !== '>')) {
+      segments.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  segments.push(current)
+  return segments.map((s) => s.trim()).filter(Boolean)
 }
 
 function redirectIsWrite(segment: string): boolean {
@@ -208,6 +398,10 @@ function redirectIsWrite(segment: string): boolean {
     if (!target || target.startsWith('&')) continue
     if (target === '/dev/null' || target === '/dev/stdout' || target === '/dev/stderr') continue
     return true
+  }
+  for (const match of segment.matchAll(/>\s*&\s+(\S+)/g)) {
+    const target = match[1] ?? ''
+    if (!['/dev/null', '/dev/stdout', '/dev/stderr'].includes(target)) return true
   }
   return /\btee\b/.test(segment)
 }
@@ -219,15 +413,32 @@ function isReadSegment(segment: string): boolean {
   const parts = body.split(/\s+/)
   const bin = parts[0] ?? ''
   const sub = parts[1] ?? ''
-  if (bin === 'systemctl' || bin === 'service') {
-    if (bin === 'service') return sub === 'status' || parts[2] === 'status'
-    return SYSTEMCTL_READ.has(sub)
-  }
-  if (bin === 'git') return GIT_READ.has(sub)
-  if (bin === 'docker' || bin === 'podman') return DOCKER_READ.has(sub)
-  if (bin === 'sed') return !/(^|\s)-[^\s]*i/.test(body)
-  if (bin === 'find') return !/\s-(?:delete|exec|ok|fprint)\b/.test(body)
+  if (bin === 'systemctl') return SYSTEMCTL_READ.has(sub)
+  if (bin === 'service') return sub === 'status' || parts[2] === 'status'
+  if (bin === 'git') return isGitRead(parts)
+  if (bin === 'docker' || bin === 'podman') return isDockerRead(parts)
+  if (bin === 'ip') return isIpRead(parts)
+  if (bin === 'ifconfig') return isIfconfigRead(parts)
+  if (bin === 'mount') return isMountRead(parts)
+  if (bin === 'swapon') return isSwaponRead(parts)
+  if (bin === 'hostname') return isHostnameRead(parts)
+  if (bin === 'hostnamectl') return isHostnamectlRead(parts)
+  if (bin === 'timedatectl') return isTimedatectlRead(parts)
+  if (bin === 'localectl') return isLocalectlRead(parts)
+  if (bin === 'loginctl') return isLoginctlRead(parts)
+  if (bin === 'journalctl') return isJournalctlRead(parts)
+  if (bin === 'dmesg') return isDmesgRead(parts)
+  if (bin === 'tail') return isTailRead(parts)
+  if (bin === 'date') return isDateRead(parts)
+  if (bin === 'printf') return isPrintfRead(parts)
+  if (bin === 'sar') return isSarRead(parts)
+  if (bin === 'ping') return isPingRead(parts)
+  if (bin === 'blkid') return isBlkidRead(parts)
+  if (bin === 'sed') return isSedRead(parts)
+  if (bin === 'find') return isFindRead(body)
   if (bin === 'du') return !/\s--delete\b/.test(body)
+  if (bin === 'sort') return isSortRead(parts)
+  if (bin === 'rg') return isRgRead(parts)
   return READ_BIN.has(bin)
 }
 
@@ -244,6 +455,7 @@ function isLocalHigh(command: string): boolean {
 export function classifyCommand(command: string, riskLevel?: string | null): CommandKind {
   const text = String(command ?? '').trim()
   if (!text) return 'write'
+  if (hasUnverifiableShellSyntax(text)) return 'high'
   if (isInteractiveCommand(text)) return 'interactive'
   if (riskLevel === 'high' || isLocalHigh(text)) return 'high'
   const segments = splitSegments(text)

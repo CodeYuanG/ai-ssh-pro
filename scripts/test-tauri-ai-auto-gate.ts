@@ -21,7 +21,7 @@ assert.ok(/pub enum AiPolicy/.test(gate), 'ai_gate defines AiPolicy')
 assert.ok(/pub fn resolve_policy\(/.test(gate), 'resolve_policy ported')
 assert.ok(/pub fn decide_safety_gate\(/.test(gate), 'decide_safety_gate ported')
 assert.ok(/pub fn classify_command\(/.test(gate), 'command classification ported')
-assert.ok(gate.includes('"docker" | "podman" => is_docker_read(sub)'), 'docker ps is a read command')
+assert.ok(gate.includes('"docker" | "podman" => is_docker_read(&parts)'), 'docker ps is a read command')
 assert.ok(gate.includes('should_force_confirm_after_auto_streak'), 'auto streak guard ported')
 
 // Agent resolves the policy, reports it, and applies the gate before writing.
