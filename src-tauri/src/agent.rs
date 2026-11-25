@@ -11,10 +11,29 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::ai::{extract_json_object_pub, AiChatPayload, AiSettings};
+use crate::ai_gate::{
+    bump_auto_write_streak, decide_safety_gate, migrate_ai_policy, protection_from_safety_context,
+    resolve_auto_streak, resolve_policy, should_force_confirm_after_auto_streak, stricter_protection,
+    AiPolicy, HostProtection, SafetyContext, SafetyMode,
+};
 use crate::ssh::SshManager;
 
 type ConfirmEntry = (String, oneshot::Sender<bool>); // (run_id, tx)
 type ConfirmMap = Arc<Mutex<HashMap<String, ConfirmEntry>>>;
+
+/// Emit a safety-gate debug row used by the AI debug window, mirroring the
+/// Electron agent's `emitDebug({ kind: 'execution', label: 'safety tier' })`.
+fn emit_debug_policy<F: Fn(Value)>(emit: &F, step: usize, detail: &str) {
+    emit(json!({
+        "type": "debug",
+        "payload": {
+            "kind": "execution",
+            "round": step,
+            "label": "safety tier",
+            "detail": detail
+        }
+    }));
+}
 
 fn resolve_tool_alias(raw: &str) -> String {
     match raw.trim() {
@@ -259,10 +278,36 @@ impl AgentRuntime {
             return Ok(());
         }
 
-        let max_steps = settings
-            .ai_max_steps
-            .filter(|n| *n >= 1 && *n <= 30)
-            .unwrap_or(10) as usize;
+        let max_steps = crate::ai_gate::resolve_max_steps(settings.ai_max_steps) as usize;
+        let auto_streak_cap = resolve_auto_streak(settings.ai_auto_streak);
+        // Resolve the AI execution policy once per run, honouring temp > host > global
+        // overrides and host protection. The Electron main process does the same.
+        let global_policy = migrate_ai_policy(settings.ai_policy.as_deref())
+            .or_else(|| migrate_ai_policy(settings.safety_tier.as_deref()))
+            .unwrap_or(AiPolicy::Ask);
+        let safety_ctx = payload
+            .safety_context
+            .clone()
+            .unwrap_or_else(SafetyContext::default);
+        let protection = stricter_protection(
+            protection_from_safety_context(&safety_ctx),
+            // Legacy payloads only carry `production: boolean`.
+            if safety_ctx.protection.is_none() && safety_ctx.production == Some(true) {
+                Some(HostProtection {
+                    level: crate::ai_gate::ProtectionLevel::Production,
+                    elevated: safety_ctx.elevated.unwrap_or(false),
+                })
+            } else {
+                None
+            },
+        );
+        let resolved_policy = resolve_policy(
+            global_policy,
+            settings.ai_auto_high_risk.unwrap_or(false),
+            &safety_ctx,
+            protection,
+        );
+        let mut auto_write_streak: u32 = 0;
         let url = format!(
             "{}/chat/completions",
             provider.base_url.trim_end_matches('/')
@@ -303,7 +348,14 @@ impl AgentRuntime {
                 emit(json!({ "type": "cancelled", "message": "aborted" }));
                 return Ok(());
             }
-            emit(json!({ "type": "progress", "step": step, "maxSteps": max_steps, "policy": "ask" }));
+            emit(json!({
+                "type": "progress",
+                "step": step,
+                "maxSteps": max_steps,
+                "policy": resolved_policy.effective.as_str(),
+                "autoStreak": auto_write_streak,
+                "autoStreakCap": auto_streak_cap
+            }));
 
             let body = json!({
                 "model": settings.model,
@@ -510,20 +562,96 @@ impl AgentRuntime {
                     emit(json!({ "type": "error", "message": "command 为空" }));
                     return Ok(());
                 }
-                let request_id = Uuid::new_v4().to_string();
-                let (tx, rx) = oneshot::channel();
-                self.confirms.lock().insert(request_id.clone(), (run_id.clone(), tx));
-                emit(json!({
+                // Apply the same policy gate as the Electron main process. The low/medium
+                // risk badge alone never decides: autopilot policy + command kind do.
+                let risk_level = parsed.get("riskLevel").and_then(|v| v.as_str());
+                let mut decision = decide_safety_gate(
+                    &command,
+                    risk_level,
+                    &resolved_policy,
+                    protection,
+                    false, // no in-flight duplicate tracking on the Tauri minimal path
+                );
+                let mut forced_confirm = false;
+                if decision.mode == SafetyMode::Auto
+                    && decision.kind != crate::ai_gate::CommandKind::Read
+                    && should_force_confirm_after_auto_streak(auto_write_streak, auto_streak_cap)
+                {
+                    decision.mode = SafetyMode::Agree;
+                    forced_confirm = true;
+                    emit(json!({
+                        "type": "progress",
+                        "step": step,
+                        "maxSteps": max_steps,
+                        "policy": resolved_policy.effective.as_str(),
+                        "autoStreak": auto_write_streak,
+                        "autoStreakCap": auto_streak_cap,
+                        "forcedConfirm": true
+                    }));
+                }
+                emit_debug_policy(
+                    &emit,
+                    step,
+                    &format!(
+                        "mode={} capped={} policy={}({}) protection={} kind={} forced={} streak={}/{}",
+                        decision.mode.as_str(),
+                        decision.mode.as_str(),
+                        resolved_policy.effective.as_str(),
+                        if resolved_policy.capped_by_readonly { "readonly" } else { "normal" },
+                        match crate::ai_gate::ai_effective_level(protection) {
+                            crate::ai_gate::ProtectionLevel::Normal => "normal",
+                            crate::ai_gate::ProtectionLevel::Production => "production",
+                            crate::ai_gate::ProtectionLevel::Readonly => "readonly",
+                        },
+                        decision.kind.as_str(),
+                        forced_confirm,
+                        auto_write_streak,
+                        auto_streak_cap
+                    ),
+                );
+
+                // suggest / hold never write; they surface as a suggestion card.
+                if matches!(decision.mode, SafetyMode::Suggest | SafetyMode::Hold) {
+                    emit(json!({
                         "type": "step",
-                        "requestId": request_id,
-                        "safetyMode": "agree",
+                        "safetyMode": decision.mode.as_str(),
                         "structured": normalize_step_structured(parsed.clone(), &command)
                     }));
-                let approved = rx.await.unwrap_or(false);
-                self.confirms.lock().remove(&request_id);
+                    continue;
+                }
+
+                // auto writes straight away — no requestId, no confirmation dock.
+                let (request_id, approved) = if decision.mode == SafetyMode::Auto {
+                    (Uuid::new_v4().to_string(), true)
+                } else {
+                    let request_id = Uuid::new_v4().to_string();
+                    let (tx, rx) = oneshot::channel();
+                    self.confirms.lock().insert(request_id.clone(), (run_id.clone(), tx));
+                    emit(json!({
+                        "type": "step",
+                        "requestId": request_id,
+                        "safetyMode": decision.mode.as_str(),
+                        "structured": normalize_step_structured(parsed.clone(), &command)
+                    }));
+                    let approved = rx.await.unwrap_or(false);
+                    self.confirms.lock().remove(&request_id);
+                    (request_id, approved)
+                };
                 if !approved || abort.load(Ordering::SeqCst) {
                     emit(json!({ "type": "cancelled", "message": "user denied or aborted" }));
                     return Ok(());
+                }
+                // Auto writes do not block on a confirmation event, so announce the
+                // step with the auto safety mode before writing.
+                if decision.mode == SafetyMode::Auto {
+                    emit(json!({
+                        "type": "step",
+                        "safetyMode": "auto",
+                        "structured": normalize_step_structured(parsed.clone(), &command)
+                    }));
+                    auto_write_streak = bump_auto_write_streak(auto_write_streak, decision.kind);
+                } else {
+                    auto_write_streak = 0;
                 }
                 let Some(sid) = payload.target_session_id.clone() else {
                     emit(json!({ "type": "error", "message": "未关联 SSH 会话，无法执行命令" }));

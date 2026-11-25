@@ -40,6 +40,9 @@ pub struct AiChatPayload {
     /// Stable conversation key — used to tag stream events for concurrent multi-session runs.
     #[serde(default)]
     pub history_key: Option<String>,
+    /// Host protection / policy context for the Core-A agent's auto-execution gate.
+    #[serde(default)]
+    pub safety_context: Option<crate::ai_gate::SafetyContext>,
 }
 
 /// Tag every `ai:stream` event so concurrent sessions can filter by run.
@@ -105,6 +108,15 @@ pub struct AiSettings {
     pub use_open_claw: Option<bool>,
     pub ssh_parse_instructions: Option<String>,
     pub ai_max_steps: Option<u32>,
+    #[serde(default)]
+    pub ai_policy: Option<String>,
+    #[serde(default)]
+    pub ai_auto_high_risk: Option<bool>,
+    #[serde(default)]
+    pub ai_auto_streak: Option<u32>,
+    /// Legacy tier, only read when `aiPolicy` is missing.
+    #[serde(default)]
+    pub safety_tier: Option<String>,
 }
 
 pub struct AiRuntime {

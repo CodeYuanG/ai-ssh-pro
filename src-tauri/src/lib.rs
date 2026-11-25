@@ -1,5 +1,6 @@
 mod agent;
 mod ai;
+mod ai_gate;
 mod backup;
 mod dialogs;
 mod docker;

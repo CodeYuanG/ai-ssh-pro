@@ -39,6 +39,7 @@ bytes = "1"
 rand = "0.8"
 scrypt = "0.11"
 aes-gcm = "0.10"
+regex = "1"
 
 [profile.release]
 panic = "abort"

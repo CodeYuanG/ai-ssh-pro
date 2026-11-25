@@ -352,10 +352,19 @@ export async function installTauriBridge(): Promise<void> {
           safetyTierSessions: s?.safetyTierSessions || {},
           autopilotAllowHosts: Array.isArray(s?.autopilotAllowHosts) ? s.autopilotAllowHosts : [],
           aiMaxSteps: s?.aiMaxSteps,
-          aiAutoStreak: s?.aiAutoStreak
+          aiAutoStreak: s?.aiAutoStreak,
+          aiPolicy: s?.aiPolicy,
+          aiAutoHighRisk: Boolean(s?.aiAutoHighRisk)
         }
       },
-      setSettings: (s: unknown) => invoke('store_set', { path: ['ai'], value: s }),
+      setSettings: async (s: unknown) => {
+        // Callers pass partial settings ({ aiPolicy }, { model }, ...). The store
+        // command replaces the whole `ai` object, so merge first to avoid wiping
+        // providers / apiKey when a single policy field is toggled.
+        const cur = await invoke<any>('store_get', { path: ['ai'] })
+        const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {}
+        await invoke('store_set', { path: ['ai'], value: { ...base, ...(s as object) } })
+      },
       chat: (payload: unknown) => invoke('ai_chat', { payload }),
       abortChat: async (runId?: string) => {
         await invoke('ai_abort_chat', { runId: runId ?? null })
