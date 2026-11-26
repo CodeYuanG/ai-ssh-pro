@@ -5714,50 +5714,83 @@ button.titlebar-overflow-btn:hover:not(:disabled) {
   height: var(--icon-size-chrome);
 }
 
-/* toast (non-blocking notifications) */
+/* toast (non-blocking notifications) — rendered inside the bottom status bar.
+   Nothing floats over the chat composer; the footer truncates overflow. */
 .toast-stack {
-  position: fixed;
-  right: 16px;
-  bottom: 40px;
-  z-index: 10050;
+  flex: 0 1 auto;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: var(--space-2);
-  pointer-events: none; /* P12-5: empty stack area must not block main CTAs */
+  min-width: 0;
+  max-width: 40%;
 }
 .toast {
   pointer-events: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
-  min-width: 220px;
-  max-width: 420px;
-  padding: 10px var(--space-3);
-  border-radius: 10px;
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-strong, var(--color-border-default));
-  box-shadow: var(--shadow-sm);
-  font-size: var(--fs-sm, 12.5px);
+  font-size: var(--fs-xs);
+  line-height: 1;
   color: var(--color-text-primary);
+  white-space: nowrap;
 }
 .toast--error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .toast--info { border-color: var(--color-border-strong, var(--color-border-default)); }
 .toast[data-toast-theme='success'] { border-color: color-mix(in srgb, var(--color-ok) 45%, transparent); }
 .toast[data-toast-theme='warn'] { border-color: color-mix(in srgb, var(--color-warn) 45%, transparent); }
+.toast > span.statusbar-toast-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.toast--error .statusbar-toast-glyph { color: var(--danger); }
+.statusbar-toast-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-actions {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-1);
+  align-items: center;
+}
 .toast button {
-  margin-left: auto;
+  flex: none;
+  margin-left: 0;
   background: none;
   border: 1px solid var(--accent);
   color: var(--accent);
   border-radius: var(--radius-sm, 4px);
-  padding: 2px var(--space-2);
+  padding: 1px var(--space-1);
+  font: inherit;
+  line-height: 1;
   cursor: pointer;
 }
+.statusbar-toast-close {
+  border-color: transparent;
+  color: var(--color-text-muted);
+  padding: 0 2px;
+}
+.statusbar-toast-close:hover { color: var(--color-text-primary); }
 /* R33 Round33: miss toast long copy wraps; action stays */
 .toast:has(.toast-actions) {
   align-items: flex-start;
 }
-.toast > span:first-of-type {
+.toast > span.statusbar-toast-label {
   flex: 1 1 auto;
   min-width: 0;
   line-height: var(--lh-snug);

@@ -29,7 +29,7 @@ import { blocksEnabled } from '@shared/terminal-blocks'
 import { aiOrigins, aiPanelSession } from '../lib/ai-origin'
 import { confirmDialog, isDialogOpen } from '../lib/dialogs'
 import { isHigherChromeOpen } from '@shared/overlay-stack'
-import { buildMemoryEvidenceView, visibleWorkingGoal, type MemoryEvidenceView } from '@shared/working-memory-view'
+import { buildMemoryEvidenceView, type MemoryEvidenceView } from '@shared/working-memory-view'
 import { releaseSessionInFlight, type SafetyMode, type SafetySettings } from '@shared/safety-tier'
 import { AI_POLICIES, isAiPolicy, policyTier, resolveAiPolicy, type AiPolicy } from '@shared/ai-policy'
 import {
@@ -1399,6 +1399,10 @@ export default function AIPanel({
   const [activeProviderId, setActiveProviderId] = useState('')
   const [activeModel, setActiveModel] = useState('')
   const tailRef = useRef<HTMLDivElement>(null)
+  /** The scrolling transcript container (`.ai-messages`). */
+  const messagesRef = useRef<HTMLDivElement>(null)
+  /** True while the transcript is pinned to the newest message. */
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pendingAgreeRef = useRef<HTMLButtonElement>(null)
   /** Round 23: one-shot — scroll to confirm after 带证据重试. */
@@ -1429,8 +1433,7 @@ export default function AIPanel({
   const convStatus: 'connected' | 'connecting' | 'disconnected' | 'none' = conversation ? conversation.status : 'none'
   const convOffline = convStatus === 'disconnected' || convStatus === 'connecting'
   const persistKeyRef = useRef(persistKey)
-  persistKeyRef.current = persistKey
-  /**
+  persistKeyRef.current = persistKey  /**
    * M20 + multi-session: each conversation can have its own in-flight turn. Stream events
    * are filtered by runId so parallel sessions do not cross-paint.
    */
@@ -1438,6 +1441,18 @@ export default function AIPanel({
   /** Last touched turn for the on-screen key (tests / stop). */
   const turnRef = useRef<TurnState | null>(null)
   const [turnElsewhere, setTurnElsewhere] = useState<{ key: string | null; host: string } | null>(null)
+  /**
+   * P1: `submitToAi` is a 360-line callback. Adding protection/elevated/hostPolicy/tempPolicy to its
+   * dependency array would rebuild it on nearly every render, so it reads the safety snapshot from a
+   * ref that is refreshed on each render instead. Without this a policy change while a session stays
+   * the same would send the previous turn's safety context to the agent.
+   */
+  const safetySnapshotRef = useRef({ production, protection, elevated, hostPolicy, tempPolicy, conversation })
+  safetySnapshotRef.current = { production, protection, elevated, hostPolicy, tempPolicy, conversation }
+  /** Synchronous latch for send(): `busy` is only set after an async snapshot IPC. */
+  const sendingRef = useRef(false)
+  /** Last payload pushed to App via onPendingChange, for equality short-circuiting. */
+  const lastPendingInfoRef = useRef<AiPendingInfo | null>(null)
 
   const setSessionBusy = useCallback((key: string | null | undefined, on: boolean) => {
     const k = (key ?? '').trim()
@@ -1638,13 +1653,6 @@ export default function AIPanel({
     [persistKey]
   )
 
-  const onProviderChange = useCallback((value: string) => {
-    setActiveProviderId(value)
-    void window.aiss.ai.setSettings({ activeProviderId: value }).then(() => {
-      window.dispatchEvent(new CustomEvent('aiss-ai-settings-saved'))
-    })
-  }, [])
-
   const onModelChange = useCallback((value: string) => {
     setActiveModel(value)
     void window.aiss.ai.setSettings({ model: value }).then(() => {
@@ -1652,9 +1660,20 @@ export default function AIPanel({
     })
   }, [])
 
+  // Follow the tail only while the user is already at the bottom. Streaming used to yank the
+  // transcript back down on every token, which made reading an earlier card impossible.
   useEffect(() => {
-    tailRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const scroller = messagesRef.current
+    if (!scroller) return
+    if (!stickToBottomRef.current) return
+    scroller.scrollTop = scroller.scrollHeight
   }, [lines, busy])
+
+  // Re-arm following when the user sends a new message (they expect to see the answer).
+  useEffect(() => {
+    if (!busy) return
+    stickToBottomRef.current = true
+  }, [busy])
 
   // Keep the waiting confirm card in view, and surface a dock above the composer.
   // Round 23: after 「带证据重试」, force-scroll + highlight the new confirm (wins over tail scroll).
@@ -1687,6 +1706,10 @@ export default function AIPanel({
   const submitToAi = useCallback(
     async (text: string, terminalExcerpt?: string) => {
       const userLine: UserLine = { role: 'user', content: text }
+      // Read the latest protection / policy / conversation at send time. These props are
+      // deliberately absent from this callback's dependency array (they would rebuild it on nearly
+      // every render), so a stale closure here would send the previous turn's safety context.
+      const { production, protection, elevated, hostPolicy, tempPolicy, conversation } = safetySnapshotRef.current
       releaseSessionInFlight(persistKey)
       const debugTurnId = crypto.randomUUID()
       const mapKey = (persistKey ?? '').trim()
@@ -1739,6 +1762,8 @@ export default function AIPanel({
       setLines(turn.lines)
       setSessionBusy(persistKey, true)
       setPendingConfirm(null)
+      // A new question always re-pins the transcript, even if the user had scrolled up.
+      stickToBottomRef.current = true
 
       // H06: always read live transcript from linesRef (post new-chat / restore), not a stale closure.
       const history: AiChatMessage[] = [
@@ -1752,13 +1777,41 @@ export default function AIPanel({
       const turnStarted = Date.now()
 
       let usedStepProtocol = false
+      /** True between a `status` (row opened) and its `step` (row replaced). */
+      let stepDeltasExpected = false
       let assistant = ''
       // 2.3: audit id per command, attached to the replay record when the exec event arrives
       const auditIds = new Map<string, string>()
+      /**
+       * P0: deltas arrive per SSE fragment. Painting each one re-rendered the whole transcript
+       * (plus every historical Markdown card) — O(tokens x messages). Accumulate and flush at most
+       * once per frame; timers / step / error events flush first so ordering is preserved.
+       */
+      let pendingDelta = ''
+      let deltaFrame: number | null = null
+      const flushDelta = (): void => {
+        if (deltaFrame != null) {
+          cancelAnimationFrame(deltaFrame)
+          deltaFrame = null
+        }
+        if (!pendingDelta) return
+        const chunk = pendingDelta
+        pendingDelta = ''
+        applyTurn((prev) => applyStreamDelta(prev, chunk))
+      }
+      const scheduleDelta = (text: string): void => {
+        pendingDelta += text
+        if (deltaFrame != null) return
+        deltaFrame = requestAnimationFrame(() => {
+          deltaFrame = null
+          flushDelta()
+        })
+      }
       const unsub = window.aiss.ai.onStream((ev) => {
       const evRun = (ev as { runId?: string }).runId?.trim()
       if (evRun && evRun !== turn.id) return
       if (!evRun && turnsByKeyRef.current.size > 1) return
+      if (ev.type !== 'delta') flushDelta()
       if (ev.type === 'exec') {
         const rec: ExecRecord = { ...ev.payload, ...(auditIds.get(ev.command) ? { auditId: auditIds.get(ev.command) } : {}) }
         applyTurn((prev) => {
@@ -1813,6 +1866,8 @@ export default function AIPanel({
         return
       }
       if (ev.type === 'status') {
+        // Every planner step begins with a status event, which opens a fresh streaming row.
+        stepDeltasExpected = true
         applyTurn((prev) => {
           const next = [...prev]
           const last = next[next.length - 1]
@@ -1824,6 +1879,9 @@ export default function AIPanel({
       }
       if (ev.type === 'step') {
         usedStepProtocol = true
+        // The structured step replaces this step's streaming row, so later deltas belong to the
+        // next step (or to nothing) until the next status arrives.
+        stepDeltasExpected = false
         const raw = ev.structured as AiAssistantReply & {
           message?: string
           summary?: string
@@ -1872,10 +1930,12 @@ export default function AIPanel({
         return
       }
       if (ev.type === 'delta') {
-        if (usedStepProtocol) return
+        // Deltas used to be dropped once the step protocol started, so only the first step ever
+        // streamed. They are legal while a step's streaming row is open.
+        if (!stepDeltasExpected) return
         assistant += ev.text
         // H04: paint partial text into the live streaming card (not a blank "Generating…" shell).
-        applyTurn((prev) => applyStreamDelta(prev, ev.text))
+        scheduleDelta(ev.text)
         return
       }
       if (ev.type === 'cancelled') {
@@ -1962,6 +2022,8 @@ export default function AIPanel({
           sessionId: persistKey || undefined
         }
       })
+      // The final reply replaces the streamed shell, so make sure the last fragment is on screen.
+      flushDelta()
       if (!usedStepProtocol) {
         const raw = assistant.trim()
         const parsed = parseAiAssistantReply(raw)
@@ -2008,6 +2070,7 @@ export default function AIPanel({
         return next
       })
     } finally {
+      flushDelta()
       unsub()
       const elapsedMs = Date.now() - turnStarted
       applyTurn((prev) => {
@@ -2054,21 +2117,29 @@ export default function AIPanel({
   const send = useCallback(async () => {
     const text = composeWithBlocks(input, pasteBlocks)
     if (!text || busy) return
+    // `busy` only flips inside submitToAi, after an IPC snapshot round-trip. Latch here so a fast
+    // double-Enter cannot start two turns for the same conversation.
+    if (sendingRef.current) return
     if (convOffline) {
       showToast(tg('ai.reconnectToContinue'), { kind: 'error' })
       return
     }
 
-    let terminalExcerpt: string | undefined
-    if (includeTerminal && activeSessionId) {
-      const snap = await fetchTerminalSnapshot('fromCommand')
-      if (snap) terminalExcerpt = snap
-    }
+    sendingRef.current = true
+    try {
+      let terminalExcerpt: string | undefined
+      if (includeTerminal && activeSessionId) {
+        const snap = await fetchTerminalSnapshot('fromCommand')
+        if (snap) terminalExcerpt = snap
+      }
 
-    setInput('')
-    setPasteBlocks([])
-    setOpenBlock(null)
-    await submitToAi(text, terminalExcerpt)
+      setInput('')
+      setPasteBlocks([])
+      setOpenBlock(null)
+      await submitToAi(text, terminalExcerpt)
+    } finally {
+      sendingRef.current = false
+    }
   }, [busy, convOffline, fetchTerminalSnapshot, includeTerminal, activeSessionId, input, pasteBlocks, submitToAi])
 
   const sendConsoleToAi = useCallback(async () => {
@@ -2190,6 +2261,8 @@ export default function AIPanel({
   }, [pendingConfirm?.requestId, pendingConfirm?.action, activeSessionId])
 
   // Tell App when a confirm is waiting so the status bar can surface it while AI is hidden.
+  // Deliberately not keyed on `lines`: that would push a fresh object into App on every streamed
+  // token and re-render the whole shell. The line is read from linesRef once per pending id.
   useEffect(() => {
     if (!pendingConfirm?.requestId) {
       setPendingPreviewHold('')
@@ -2212,12 +2285,17 @@ export default function AIPanel({
     if (preview) {
       setPendingPreviewHold((prev) => (prev === preview ? prev : preview))
     }
-    onPendingChange?.({
+    const next = {
       requestId: pendingConfirm.requestId,
       action: String(pendingConfirm.action),
       preview: preview || pendingPreviewHold
-    })
-  }, [pendingConfirm, lines, onPendingChange, pendingPreviewHold])
+    }
+    // Equal payload → keep the previous object so App does not re-render for nothing.
+    const last = lastPendingInfoRef.current
+    if (last && last.requestId === next.requestId && last.action === next.action && last.preview === next.preview) return
+    lastPendingInfoRef.current = next
+    onPendingChange?.(next)
+  }, [pendingConfirm, onPendingChange, pendingPreviewHold])
 
   // Status-bar chip: open AI → bump token → scroll dock/card into view.
   useEffect(() => {
@@ -3237,7 +3315,7 @@ export default function AIPanel({
         </div>
       </div>
 
-      {busy && turnElsewhere ? (
+      {turnElsewhere ? (
         <div className="ai-turn-elsewhere" role="status" data-testid="ai-turn-elsewhere">
           <span>{tg('ai.turnElsewhere', { host: turnElsewhere.host || tg('ai.contextSession') })}</span>
           {turnElsewhere.key && onSwitchToConversation ? (
@@ -3317,7 +3395,21 @@ export default function AIPanel({
         </div>
       ) : null}
 
-      <div className="ai-messages" data-chat-ui="cursor">
+      <div
+        className="ai-messages"
+        data-chat-ui="cursor"
+        ref={messagesRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-busy={busy || undefined}
+        onScroll={() => {
+          const el = messagesRef.current
+          if (!el) return
+          // 48px of slack so a one-line nudge does not unpin the transcript.
+          stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+        }}
+      >
         {lines.length === 0 && (
           <div className="ai-reply-empty" data-testid="ai-reply-empty" role="status">
             <p>{tg(
@@ -4026,14 +4118,6 @@ export default function AIPanel({
             }}
             placeholder={tg('ai.placeholder')}
             title={tg('ai.inputTip')}
-            onMouseUp={() => {
-              const ta = inputRef.current
-              if (!ta) return
-              const { selectionStart, selectionEnd } = ta
-              if (selectionStart === selectionEnd) return
-              const slice = ta.value.slice(selectionStart, selectionEnd)
-              if (slice) void navigator.clipboard.writeText(slice)
-            }}
             onContextMenu={(e) => {
               e.preventDefault()
               setInputMenu({ x: e.clientX, y: e.clientY })

@@ -15,8 +15,9 @@ import {
 } from '../shared/ipc'
 import type { SshSessionManager } from './ssh-manager'
 import { forwardDebugPayloadToWindow } from './debug-window-broadcast'
-import { buildBootstrapPrompt } from './core-a-bootstrap'
+import { buildBootstrapPrompt, matchSkillsForQuestion } from './core-a-bootstrap'
 import { actionsPrompt, proposalFromReply, redactForAi } from '../shared/ai-actions'
+import { extractJsonObjectText } from '../shared/ai-json'
 import {
   appendStoredArchive,
   currentThreadEpoch,
@@ -94,7 +95,6 @@ function send(wc: WebContents, ev: AiStreamEvent): void {
   if (!wc.isDestroyed()) wc.send('ai:stream', payload)
   if (payload.type === 'debug') forwardDebugPayloadToWindow(payload.payload)
 }
-
 const DEBUG_AI =
   process.env.AISS_LOG_AI_INTERACTIONS === '1' || process.env.AISS_LOG_AI === '1' || process.env.NODE_ENV === 'development'
 
@@ -121,7 +121,9 @@ function lastUserQuestionForDebug(messages: { role: string; content: string }[])
 }
 
 function cloneChatMessages(m: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
-  return JSON.parse(JSON.stringify(m)) as Array<{ role: string; content: string }>
+  // Shallow copy: only the array and each `{role, content}` pair need to be independent (messages are
+  // never mutated in place), and JSON round-tripping a 30k-char prompt every step is pure waste.
+  return m.map((message) => ({ role: message.role, content: message.content }))
 }
 
 function capDebugDetail(s: string, max = 12000): string {
@@ -161,18 +163,25 @@ function settleConfirmsForRun(runId: string): void {
   }
 }
 
-/** 停止 AI 助手。传入 runId 只停该会话；省略则停全部。 */
-export function abortAiChat(runId?: string): void {
+/**
+ * Stop one AI run. A missing/blank runId is a no-op: Stop in one conversation must never abort the
+ * other sessions' runs (that used to drop their pending confirms too). Use {@link abortAllAiChats}
+ * for "stop everything".
+ */
+export function abortAiChat(runId?: string): boolean {
   const id = typeof runId === 'string' ? runId.trim() : ''
-  if (id) {
-    const cur = activeAiChats.get(id)
-    if (!cur) return
-    cur.ctx.userAborted = true
-    cur.ac.abort()
-    activeAiChats.delete(id)
-    settleConfirmsForRun(id)
-    return
-  }
+  if (!id) return false
+  const cur = activeAiChats.get(id)
+  if (!cur) return false
+  cur.ctx.userAborted = true
+  cur.ac.abort()
+  activeAiChats.delete(id)
+  settleConfirmsForRun(id)
+  return true
+}
+
+/** Explicit "stop all runs" (command palette / quit). */
+export function abortAllAiChats(): void {
   for (const [, cur] of activeAiChats) {
     cur.ctx.userAborted = true
     cur.ac.abort()
@@ -357,24 +366,34 @@ function appendObservation(state: CoreSessionState, snapshot: string, command?: 
   if (state.observations.length > 10) state.observations = state.observations.slice(-10)
 }
 
+/** Lines read when the planner does not ask for a specific window. */
+const DEFAULT_SNAPSHOT_LINES = 1000
+
 async function captureTerminalSnapshot(
   ssh: SshSessionManager,
   sessionId: string,
-  preferFromCommand: boolean
+  preferFromCommand: boolean,
+  opts?: { maxLines?: number; includeCommandLine?: boolean }
 ): Promise<string | null> {
+  // The planner's toolInput window is honoured: asking for 200 lines must not return 1000.
+  const maxLines =
+    typeof opts?.maxLines === 'number' && Number.isFinite(opts.maxLines)
+      ? Math.min(2000, Math.max(1, Math.floor(opts.maxLines)))
+      : DEFAULT_SNAPSHOT_LINES
+  const includeCommandLine = opts?.includeCommandLine !== false
   const snap = ssh.getRingSnapshot(sessionId, {
-    maxLines: 1000,
+    maxLines,
     fromCurrentCommand: preferFromCommand,
-    includeCommandLine: true
+    includeCommandLine
   })
   if (snap == null || !snap.trim()) return null
   let text = snap.trimEnd()
   if (preferFromCommand && text.includes('（命令已发送，暂未捕获到后续输出）')) {
     await new Promise<void>((r) => setTimeout(r, 500))
     const retry = ssh.getRingSnapshot(sessionId, {
-      maxLines: 1000,
+      maxLines,
       fromCurrentCommand: true,
-      includeCommandLine: true
+      includeCommandLine
     })
     if (retry?.trim()) text = retry.trimEnd()
   }
@@ -580,15 +599,7 @@ const assistantStepSchema = z
   })
 
 function extractJsonObject(text: string): string {
-  let s = text.trim()
-  const fence = /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/im
-  const fm = s.match(fence)
-  if (fm) s = fm[1].trim()
-
-  const start = s.indexOf('{')
-  const end = s.lastIndexOf('}')
-  if (start >= 0 && end > start) s = s.slice(start, end + 1)
-  return s
+  return extractJsonObjectText(text)
 }
 
 function pickStringField(obj: Record<string, unknown>, keys: string[]): string {
@@ -677,6 +688,44 @@ export function parseAssistantStep(content: string): { structured: AiAssistantRe
   }
 }
 
+/**
+ * The part of the system prompt that never changes within a run — or between runs for the same
+ * locale and skill set. It is kept as a prefix so providers with automatic prefix caching (every
+ * OpenAI-compatible endpoint caches a stable prompt head on 64/1024-token boundaries) can reuse it
+ * across steps instead of re-billing it from step 2 onward.
+ *
+ * Cached per locale + active skills: `actionsPrompt()` alone is ~4.2k chars of static English and
+ * the charter another ~1.2k, so rebuilding them every step was pure waste.
+ */
+const staticSystemPromptCache = new Map<string, string>()
+
+function buildStaticSystemPrompt(userQuestion: string): string {
+  const skills = matchSkillsForQuestion(userQuestion)
+    .map((s) => s.id)
+    .join(',')
+  const cacheKey = `${mt('zh', 'en')}|${skills}`
+  const cached = staticSystemPromptCache.get(cacheKey)
+  if (cached) return cached
+  const prompt = [
+    buildBootstrapPrompt(userQuestion),
+    '---',
+    mt('你必须输出单个 JSON 对象；禁止 Markdown、代码围栏以及 JSON 外文字。', "Output a single JSON object; no Markdown, no code fences, no text outside the JSON."),
+    mt(
+      'description 中的列举必须使用真实换行，例如 1) …\\n2) …\\n3) …。仍禁止 Markdown 围栏，禁止 JSON 以外的文字。',
+      'In description, separate list items with a real newline, for example 1) …\\n2) …\\n3) …. Still no Markdown fences and no text outside the JSON.'
+    ),
+    mt('action（必填）：tool_call | command | end。', "action (required): tool_call | command | end."),
+    mt('command 一律需要用户确认后才执行，包括 riskLevel=low，不会自动写入终端；get_terminal_snapshot 由系统自动执行。', "Every command, including riskLevel=low, runs only after user confirmation and is never written to the terminal automatically; get_terminal_snapshot is executed by the system automatically."),
+    mt('可用 toolName：get_terminal_snapshot | get_host_inventory | upsert_host_service | append_host_note。', "Available toolName: get_terminal_snapshot | get_host_inventory | upsert_host_service | append_host_note."),
+    mt('若上一轮刚执行过命令，系统可能已自动附带终端观测结果，请优先阅读后再决策。', "If a command just ran in the previous round, terminal observations may be attached automatically; read them before deciding."),
+    mt('JSON 字段（description 与 action 必填）：description, action, completed, toolName, toolInput, command, riskLevel, notes, appAction。', "JSON fields (description and action required): description, action, completed, toolName, toolInput, command, riskLevel, notes, appAction."),
+    actionsPrompt()
+  ].join('\n')
+  staticSystemPromptCache.set(cacheKey, prompt)
+  return prompt
+}
+
+/** Per-step state. Everything here changes between steps, so it must NOT sit in front of the cacheable head. */
 function buildCoreSystemPrompt(
   payload: AiChatPayload,
   state: CoreSessionState,
@@ -706,18 +755,7 @@ function buildCoreSystemPrompt(
     : mt('（暂无）', "(none)")
 
   const parts: string[] = [
-    buildBootstrapPrompt(ctx.userQuestion),
     ...(ctx.memoryBlocks?.trim() ? [ctx.memoryBlocks.trim()] : []),
-    '---',
-    mt('你必须输出单个 JSON 对象；禁止 Markdown、代码围栏以及 JSON 外文字。', "Output a single JSON object; no Markdown, no code fences, no text outside the JSON."),
-    mt(
-      'description 中的列举必须使用真实换行，例如 1) …\\n2) …\\n3) …。仍禁止 Markdown 围栏，禁止 JSON 以外的文字。',
-      'In description, separate list items with a real newline, for example 1) …\\n2) …\\n3) …. Still no Markdown fences and no text outside the JSON.'
-    ),
-    mt('action（必填）：tool_call | command | end。', "action (required): tool_call | command | end."),
-    mt('command 一律需要用户确认后才执行，包括 riskLevel=low，不会自动写入终端；get_terminal_snapshot 由系统自动执行。', "Every command, including riskLevel=low, runs only after user confirmation and is never written to the terminal automatically; get_terminal_snapshot is executed by the system automatically."),
-    mt('可用 toolName：get_terminal_snapshot | get_host_inventory | upsert_host_service | append_host_note。', "Available toolName: get_terminal_snapshot | get_host_inventory | upsert_host_service | append_host_note."),
-    mt('若上一轮刚执行过命令，系统可能已自动附带终端观测结果，请优先阅读后再决策。', "If a command just ran in the previous round, terminal observations may be attached automatically; read them before deciding."),
     mt(`当前轮次：${ctx.step}`, `Current round: ${ctx.step}`),
     mt('工作区观测笔记（跨轮持久）：', "Workspace observation notes (persist across rounds):"),
     obsSection,
@@ -729,8 +767,7 @@ function buildCoreSystemPrompt(
     taskGraphSection,
     mt('最近工具结果评分：', "Latest tool result score:"),
     lastScoreSection,
-    mt(`当前失败连续计数：${state.failureStreak}`, `Consecutive failures: ${state.failureStreak}`),
-    mt('JSON 字段（description 与 action 必填）：description, action, completed, toolName, toolInput, command, riskLevel, notes。', "JSON fields (description and action required): description, action, completed, toolName, toolInput, command, riskLevel, notes.")
+    mt(`当前失败连续计数：${state.failureStreak}`, `Consecutive failures: ${state.failureStreak}`)
   ]
 
   if (ctx.plannerHint) {
@@ -801,6 +838,93 @@ function buildCoreSystemPrompt(
   return parts.join('\n')
 }
 
+/**
+ * Pull the human-readable `description` out of a *partially* received planner JSON.
+ * Only complete escape sequences are decoded, so a half-arrived `\u00` never renders as garbage.
+ */
+export function partialDescriptionText(partial: string): string {
+  const m = /"description"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(partial)
+  if (!m) return ''
+  const raw = m[1]
+  let out = ''
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch !== '\\') {
+      out += ch
+      continue
+    }
+    const next = raw[i + 1]
+    if (next == null) break // trailing backslash: wait for the rest
+    if (next === 'n') {
+      out += '\n'
+      i += 1
+    } else if (next === 't') {
+      out += '\t'
+      i += 1
+    } else if (next === 'r') {
+      out += '\n'
+      i += 1
+    } else if (next === '"' || next === '\\' || next === '/') {
+      out += next
+      i += 1
+    } else if (next === 'u') {
+      const hex = raw.slice(i + 2, i + 6)
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) break // incomplete \uXXXX
+      out += String.fromCharCode(parseInt(hex, 16))
+      i += 5
+    } else {
+      i += 1
+    }
+  }
+  return out
+}
+
+/**
+ * Incremental reader for an OpenAI-compatible `stream: true` SSE body.
+ * Returns both the concatenated assistant text and the raw body: some compatible endpoints ignore
+ * `stream: true` and answer with a single JSON object (possibly with a non-JSON content-type), so
+ * the caller needs the raw bytes as a fallback.
+ */
+async function readSseDeltas(res: Response, onPiece: (piece: string) => void): Promise<{ text: string; raw: string }> {
+  const body = res.body
+  if (!body) return { text: '', raw: '' }
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let carry = ''
+  let acc = ''
+  let raw = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = decoder.decode(value, { stream: true })
+      raw += chunk
+      carry += chunk
+      const lines = carry.split('\n')
+      carry = lines.pop() ?? ''
+      for (const line of lines) {
+        const s = line.trim()
+        if (!s.startsWith('data:')) continue
+        const data = s.slice(5).trim()
+        if (!data || data === '[DONE]') continue
+        try {
+          const json = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }
+          const piece = json.choices?.[0]?.delta?.content
+          if (piece) {
+            acc += piece
+            onPiece(piece)
+          }
+        } catch {
+          /* ignore keep-alive / non-JSON lines */
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock?.()
+  }
+  return { text: acc, raw }
+}
+
 async function callCorePlannerJson(params: {
   apiKey: string
   baseURL: string
@@ -809,8 +933,10 @@ async function callCorePlannerJson(params: {
   messages: Array<{ role: string; content: string }>
   timeoutMs: number
   userAbortSignal?: AbortSignal
+  /** Called with each new fragment of assistant text (used to paint the prose while it streams). */
+  onPiece?: (piece: string) => void
 }): Promise<string> {
-  const { apiKey, baseURL, model, temperature, messages, timeoutMs, userAbortSignal } = params
+  const { apiKey, baseURL, model, temperature, messages, timeoutMs, userAbortSignal, onPiece } = params
   const url = `${baseURL.replace(/\/$/, '')}/chat/completions`
 
   const controller = new AbortController()
@@ -831,6 +957,8 @@ async function callCorePlannerJson(params: {
   async function post(withResponseFormat: boolean): Promise<Response> {
     const body: Record<string, unknown> = { ...baseBody }
     if (withResponseFormat) body.response_format = { type: 'json_object' }
+    // Streaming keeps the first visible token ~= first generated token instead of the whole JSON.
+    if (onPiece) body.stream = true
     return await fetch(url, {
       method: 'POST',
       headers: { ...aiAuthHeaders(apiKey), 'Content-Type': 'application/json' },
@@ -853,9 +981,26 @@ async function callCorePlannerJson(params: {
       }
     }
 
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    // Some compatible endpoints ignore `stream: true` and answer with one JSON body (occasionally
+    // with a non-JSON content-type). Read the body once, use SSE fragments when they exist, and
+    // otherwise parse the raw bytes as the non-streaming JSON shape.
+    const contentType = res.headers.get('content-type') ?? ''
+    const looksJson = contentType.includes('json') && !contentType.includes('event-stream')
+    let json: { choices?: { message?: { content?: string } }[] }
+    if (onPiece && !looksJson) {
+      const { text, raw } = await readSseDeltas(res, onPiece)
+      if (text) return text
+      try {
+        json = JSON.parse(raw) as { choices?: { message?: { content?: string } }[] }
+      } catch {
+        throw new Error(mt('模型未返回有效 content', "The model returned no valid content"))
+      }
+    } else {
+      json = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    }
     const content = json.choices?.[0]?.message?.content
     if (!content || typeof content !== 'string') throw new Error(mt('模型未返回有效 content', "The model returned no valid content"))
+    if (onPiece) onPiece(content)
     return content
   } catch (e) {
     if (isAbortError(e)) {
@@ -924,6 +1069,11 @@ export async function runOpenClawCoreAgentChat(
     targetSessionId: payload.targetSessionId
   })
   const sessionState = getSessionState(threadId)
+  // A new user turn starts a new plan: the repeat/failure counters must not leak across runs, or a
+  // follow-up ("run that again") gets force-ended on the model's second identical proposal.
+  sessionState.repeatActionCount = 0
+  sessionState.lastActionFingerprint = null
+  sessionState.failureStreak = 0
   ensureSeedTask(sessionState, userQuestion || lastUserQuestionForDebug(payload.messages))
   let { ctx: thread, epoch: threadEpoch } = loadThreadContext(threadId)
   const absorbed = absorbUserTurn(thread, conversation)
@@ -962,6 +1112,8 @@ export async function runOpenClawCoreAgentChat(
   let autoWriteStreak = 0
   let forcedConfirmPending = false
   let evidenceGateUsed = false
+  /** One JSON repair round per run; a second malformed reply still fails fast. */
+  let jsonRepairUsed = false
   const MAX_SAME_SNAPSHOT_REPEAT = 2
   const MAX_CONSECUTIVE_SNAPSHOT_TOOLS = 6
 
@@ -1084,9 +1236,14 @@ export async function runOpenClawCoreAgentChat(
         outputTruncated: outputView.truncated
       })
 
+      // Order matters for cost: the static head (charter + rules + app actions, ~5.4k chars) comes
+      // first so the provider's automatic prefix cache can reuse it, and everything that changes per
+      // step (memory, round counter, snapshot) comes after it.
+      const staticPrompt = buildStaticSystemPrompt(userQuestion)
       const messages: Array<{ role: string; content: string }> = [
         { role: 'system', content: 'json' },
-        { role: 'system', content: sysPrompt + '\n\n' + actionsPrompt() },
+        { role: 'system', content: staticPrompt },
+        { role: 'system', content: sysPrompt },
         ...conversation.map((t) => ({ ...t, content: redactForAi(t.content) }))
       ]
       const recentChars = conversation.reduce((sum, turn) => sum + turn.content.length, 0)
@@ -1100,7 +1257,7 @@ export async function runOpenClawCoreAgentChat(
         recallItems: recalled.length,
         recentChars,
         recentItems: conversation.length,
-        systemChars: sysPrompt.length
+        systemChars: sysPrompt.length + staticPrompt.length
       })
       const omBudget = observeOmBudget(thread)
       emitDebug({
@@ -1141,17 +1298,68 @@ export async function runOpenClawCoreAgentChat(
         lastCommand: lastCommand ? trimForLog(lastCommand, 200) : null
       })
 
-      const content = await callCorePlannerJson({
+      // Paint the prose while the planner is still generating. Only the human-readable
+      // `description` is forwarded, so the raw JSON never leaks into the transcript.
+      let streamedVisible = ''
+      let streamedRaw = ''
+      const onPiece = (piece: string): void => {
+        streamedRaw += piece
+        const next = partialDescriptionText(streamedRaw)
+        if (next.length <= streamedVisible.length) return
+        const delta = next.slice(streamedVisible.length)
+        streamedVisible = next
+        send(wc, { type: 'delta', text: delta })
+      }
+
+      let content = await callCorePlannerJson({
         apiKey,
         baseURL,
         model: settings.model,
         temperature,
         messages,
         timeoutMs,
-        userAbortSignal: ac.signal
+        userAbortSignal: ac.signal,
+        onPiece
       })
 
-      const { structured, parseError } = parseAssistantStep(content)
+      let { structured, parseError } = parseAssistantStep(content)
+
+      // One repair round: a single malformed reply used to abort the whole run and throw away
+      // every confirmed step before it. Ask once for a bare JSON object instead.
+      if (!structured && !jsonRepairUsed) {
+        jsonRepairUsed = true
+        send(wc, { type: 'status', text: mt('模型输出不是合法 JSON，正在自动重试一次…', 'The model reply was not valid JSON; retrying once…') })
+        emitDebug({
+          kind: 'model',
+          round: step,
+          model: settings.model,
+          temperature,
+          requestMessages: cloneChatMessages(messages),
+          responseRaw: content,
+          structured: null,
+          parseError: parseError ?? mt('JSON 解析失败', 'JSON parse failed')
+        })
+        content = await callCorePlannerJson({
+          apiKey,
+          baseURL,
+          model: settings.model,
+          temperature,
+          messages: [
+            ...messages,
+            { role: 'assistant', content: content.slice(0, 4000) },
+            {
+              role: 'user',
+              content: mt(
+                '上一条响应不是合法 JSON。只输出一个 JSON 对象，不要 Markdown、不要代码围栏、不要在 JSON 之外输出任何文字。',
+                'The previous response was not valid JSON. Output exactly one JSON object: no Markdown, no code fences, no text outside the JSON.'
+              )
+            }
+          ],
+          timeoutMs,
+          userAbortSignal: ac.signal
+        })
+        ;({ structured, parseError } = parseAssistantStep(content))
+      }
 
       if (!structured) {
         throw new Error(parseError ?? mt('模型返回 JSON 解析失败', "Failed to parse the model's JSON"))
@@ -1351,7 +1559,9 @@ export async function runOpenClawCoreAgentChat(
       if (parsed.action === 'end' && lastFailure) {
         const alreadyStopped =
           parsed.description.includes('重试预算已用尽') || parsed.description.includes('retry budget is exhausted')
-        const failureForEnd = truncateCiteableOutput(lastFailure.evidence)
+        // Reuse the view built for the prompt above: truncateCiteableOutput scans every line, so a
+        // second pass over a thousand-line snapshot per step was pure waste.
+        const failureForEnd = failureView ?? truncateCiteableOutput(lastFailure.evidence)
         parsed = {
           ...parsed,
           description: explainFailedCommand(
@@ -1365,7 +1575,7 @@ export async function runOpenClawCoreAgentChat(
       }
 
       if (parsed.action === 'end' && (lastToolResult != null || thread.citeHold)) {
-        const cited = lastToolResult != null ? truncateCiteableOutput(lastToolResult) : emptyOutputView()
+        const cited = lastToolResult != null ? outputView : emptyOutputView()
         if (cited.truncated || thread.citeHold) {
           parsed = { ...parsed, description: explainCiteableOutput(parsed.description, cited, thread.citeHold) }
         }
@@ -1622,7 +1832,11 @@ export async function runOpenClawCoreAgentChat(
 
           logAi('tool:get_terminal_snapshot exec', { maxLines, fromCurrentCommand, includeCommandLine, targetSessionId })
 
-          const captured = await captureTerminalSnapshot(ssh, targetSessionId, fromCurrentCommand)
+          // The planner's requested window is passed through instead of being dropped.
+          const captured = await captureTerminalSnapshot(ssh, targetSessionId, fromCurrentCommand, {
+            maxLines,
+            includeCommandLine
+          })
           snapText =
             captured == null || !captured.trim() ?
               mt('（该会话暂无缓冲输出或会话已断开。）', "(No buffered output for this session, or it has disconnected.)")
@@ -1908,7 +2122,12 @@ export async function runOpenClawCoreAgentChat(
       }
 
       persistAll()
-      await new Promise<void>((resolve) => setTimeout(resolve, pollWaitMs))
+      // Only wait when this step produced no fresh observation. Command steps already waited for
+      // the exit code / settle delay, and snapshot steps already captured the ring buffer, so an
+      // unconditional sleep here was 1.5s of dead time per step (13.5s on a 10-step run).
+      if (pollWaitMs > 0 && lastToolResult == null) {
+        await new Promise<void>((resolve) => setTimeout(resolve, pollWaitMs))
+      }
     }
 
     send(wc, {

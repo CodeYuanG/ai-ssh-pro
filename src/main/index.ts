@@ -41,7 +41,7 @@ import { registerBackupIpc } from './backup-ipc'
 import { registerSyncIpc } from './sync-ipc'
 import { registerSnapshotIpc } from './snapshot-ipc'
 import { registerServerToolsIpc } from './server-tools-ipc'
-import { abortAiChat, resolveAiConfirmStep, runOpenClawCoreAgentChat } from './ai-interactive-agent'
+import { abortAiChat, abortAllAiChats, resolveAiConfirmStep, runOpenClawCoreAgentChat } from './ai-interactive-agent'
 import { getWorkingMemoryGoal, getWorkingMemorySnapshot } from './core-a-memory'
 import { streamOpenAICompatibleChat } from './ai-stream'
 import { setDebugWindowWebContents } from './debug-window-broadcast'
@@ -1203,7 +1203,12 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('ai:abortChat', (_e, runId?: string) => {
-    abortAiChat(typeof runId === 'string' ? runId : undefined)
+    // A blank runId never means "all runs": Stop in one tab must not abort the others.
+    return abortAiChat(typeof runId === 'string' ? runId : undefined)
+  })
+
+  ipcMain.handle('ai:abortAllChats', () => {
+    abortAllAiChats()
   })
 
   ipcMain.on('ai:protection:set', (_event, sessionId: string, protection: { level?: unknown; elevated?: unknown } | null) => {
@@ -1330,6 +1335,8 @@ if (!gotSingleInstanceLock) {
     isQuitting = true
     destroyBrandTray()
     cleanupSessions()
+    // Do not leave a planner loop or a pending confirm waiter alive across shutdown.
+    abortAllAiChats()
     if (!forceExitTimer) {
       forceExitTimer = setTimeout(() => {
         forceExitTimer = null

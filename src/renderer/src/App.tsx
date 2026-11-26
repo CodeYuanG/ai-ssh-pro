@@ -10793,6 +10793,7 @@ export default function App() {
         </div>
       ) : null}
       <footer className="app-statusbar" data-testid="app-statusbar">
+        <ToastHost />
         {(() => {
           const g = activeSessionId ? guardForSession(activeSessionId) : null
           const ro = g && readonlyActive(g.level, g.elevated)
@@ -11421,7 +11422,6 @@ export default function App() {
       ) : null}
 
       <SearchAllTermsModal open={searchAllOpen} onClose={() => setSearchAllOpen(false)} labelFor={searchAllLabel} onPick={searchAllPick} />
-      <ToastHost />
 
       {sessionMenu && (() => {
         const p = sessionMenu.profile
