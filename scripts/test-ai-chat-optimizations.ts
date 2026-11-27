@@ -51,7 +51,40 @@ assert.ok(!panel.includes("onMouseUp={() => {\n              const ta = inputRef
 assert.ok(panel.includes('sendingRef'), 'send() has a synchronous latch')
 assert.ok(panel.includes('safetySnapshotRef'), 'safety context read from latest ref')
 assert.match(panel, /\{turnElsewhere \? \(/, 'elsewhere banner not gated on own busy')
-assert.ok(panel.includes('role="log"'), 'transcript is a live log region')
+assert.ok(panel.includes('role="log"'), 'transcript keeps log semantics for history browsing')
+assert.match(panel, /role="log"\s+aria-label=\{tg\('ai\.transcript'\)\}\s+aria-live="off"/, 'streaming tokens do not trigger transcript announcements')
+assert.ok(!panel.includes('aria-relevant="additions text"'), 'transcript no longer requests text-change announcements')
+assert.match(panel, /data-testid="ai-live-status"\s+role="status"\s+aria-live="polite"\s+aria-atomic="true"/, 'terminal states share one atomic polite status region')
+assert.ok(panel.includes("setLiveStatus('')"), 'a new turn clears the previous terminal announcement')
+assert.ok(!panel.includes("setLiveStatus(tg('ai.busy'))"), 'generation start is not announced as a live status')
+for (const key of ['ai.cancelled', 'ai.replyFailed', 'ai.replyReady']) {
+  assert.ok(panel.includes(`setLiveStatus(terminalState.current === 'cancelled' ? tg('ai.cancelled') : terminalState.current === 'error' ? tg('ai.replyFailed') : tg('ai.replyReady')`) || panel.includes(`tg('${key}')`), `${key} is wired into status announcements`)
+}
+assert.ok(panel.includes('htmlFor={composerInputId}') && panel.includes('id={composerInputId}'), 'composer label is explicitly associated with its textarea')
+assert.ok(panel.includes('rows={1}'), 'composer starts with one row before content-driven sizing')
+
+const styles = norm('src/renderer/src/styles.css')
+const textareaRules = [...styles.matchAll(/\.ai-panel \.ai-input-row \.ai-composer textarea\s*\{([^}]*)\}/g)]
+const textareaRule = textareaRules.at(-1)?.[1] ?? ''
+assert.match(textareaRule, /height:\s*auto/, 'textarea height follows its content')
+assert.match(textareaRule, /field-sizing:\s*content/, 'textarea uses native content sizing')
+assert.match(textareaRule, /min-height:\s*64px/, 'empty composer keeps its compact minimum height')
+assert.match(textareaRule, /max-height:\s*160px/, 'composer growth is capped')
+assert.match(textareaRule, /overflow-y:\s*auto/, 'overflowing text remains scrollable')
+const commandRule = styles.match(/\.ai-dark-card \.ai-reply-cmd-code\s*\{([^}]*)\}/)?.[1] ?? ''
+assert.match(commandRule, /white-space:\s*pre-wrap/, 'commands preserve line breaks while wrapping')
+assert.match(commandRule, /word-break:\s*normal/, 'commands are not split inside arguments')
+assert.match(commandRule, /overflow-wrap:\s*normal/, 'long command tokens retain horizontal scrolling')
+assert.doesNotMatch(commandRule, /break-all/, 'dark command cards do not split every character')
+assert.ok(panel.includes('function CommandText') && panel.includes('command.split(/(\\s+)/)'), 'command rendering preserves whitespace between intact tokens')
+assert.ok(panel.includes('className="ai-reply-cmd-token"'), 'command cards render token spans')
+const tokenRule = styles.match(/\.ai-reply-cmd-token\s*\{([^}]*)\}/)?.[1] ?? ''
+assert.match(tokenRule, /white-space:\s*nowrap/, 'hyphenated command arguments do not split across lines')
+
+const i18n = norm('src/renderer/src/lib/i18n.tsx')
+for (const key of ['ai.inputLabel', 'ai.transcript', 'ai.replyReady', 'ai.replyFailed']) {
+  assert.equal(i18n.split(`'${key}':`).length - 1, 2, `${key} has Chinese and English copy`)
+}
 
 // --- App/index wiring ----------------------------------------------------------------------
 const index = norm('src/main/index.ts')

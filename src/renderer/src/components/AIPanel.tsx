@@ -2,7 +2,7 @@ import { hasUsableKey } from '@shared/ai-presets'
 import AiActionCard from './AiActionCard'
 import type { ActionResult } from '@shared/ai-actions'
 import { recallStep, userPrompts } from '@shared/ai-recall'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { tg } from '../lib/i18n'
 import { keysFor } from '@shared/keymap'
 import { friendlyError, friendlyErrorMessage } from '../lib/friendly-error'
@@ -196,6 +196,20 @@ function HighlightedText({ text }: { text: string }): ReactNode {
           </code>
         ) : (
           <MetricText key={i} text={s.text} />
+        )
+      )}
+    </>
+  )
+}
+
+function CommandText({ command }: { command: string }) {
+  return (
+    <>
+      {command.split(/(\s+)/).map((part, i) =>
+        /\S/.test(part) ? (
+          <span key={i} className="ai-reply-cmd-token">{part}</span>
+        ) : (
+          <Fragment key={i}>{part}</Fragment>
         )
       )}
     </>
@@ -466,7 +480,7 @@ function OpsReply({
                 <Icon name="clipboard-list" size={14} />
               </button>
             </div>
-            <code className="ai-reply-cmd-code">{block.commands.join('\n')}</code>
+            <code className="ai-reply-cmd-code"><CommandText command={block.commands.join('\n')} /></code>
             {showActions ? (
               commandBar ? (
                 commandBar(bundle)
@@ -594,6 +608,8 @@ export default function AIPanel({
   focusExecToken = 0,
   focusExec = null
 }: Props) {
+  const composerInputId = useId()
+  const [liveStatus, setLiveStatus] = useState('')
   const [lines, setLines] = useState<Line[]>([])
   /** D52: index into userPrompts(lines) while recalling, -1 otherwise */
   const recallRef = useRef(-1)
@@ -1761,6 +1777,7 @@ export default function AIPanel({
       }
       setLines(turn.lines)
       setSessionBusy(persistKey, true)
+      if (onScreen()) setLiveStatus('')
       setPendingConfirm(null)
       // A new question always re-pins the transcript, even if the user had scrolled up.
       stickToBottomRef.current = true
@@ -1777,6 +1794,7 @@ export default function AIPanel({
       const turnStarted = Date.now()
 
       let usedStepProtocol = false
+      const terminalState: { current: 'cancelled' | 'error' | null } = { current: null }
       /** True between a `status` (row opened) and its `step` (row replaced). */
       let stepDeltasExpected = false
       let assistant = ''
@@ -1939,6 +1957,7 @@ export default function AIPanel({
         return
       }
       if (ev.type === 'cancelled') {
+        terminalState.current = 'cancelled'
         setTurnPending(null)
         applyTurn((prev) => {
           const next = [...prev]
@@ -1970,6 +1989,7 @@ export default function AIPanel({
         return
       }
       if (ev.type === 'error') {
+        terminalState.current = 'error'
         setTurnPending(null)
         applyTurn((prev) => {
           const next = [...prev]
@@ -2053,6 +2073,7 @@ export default function AIPanel({
         })
       }
     } catch (err) {
+      terminalState.current = 'error'
       const raw = err instanceof Error ? err.message : String(err ?? '')
       const fe = friendlyError(raw)
       applyTurn((prev) => {
@@ -2085,6 +2106,7 @@ export default function AIPanel({
         turnsByKeyRef.current.delete(mapKey)
         setSessionBusy(persistKey, false)
         if (onScreen()) {
+          setLiveStatus(terminalState.current === 'cancelled' ? tg('ai.cancelled') : terminalState.current === 'error' ? tg('ai.replyFailed') : tg('ai.replyReady'))
           setRunProgress(null)
           setTurnPending(null)
           turnRef.current = null
@@ -2509,6 +2531,7 @@ export default function AIPanel({
     // H05: unlock composer right away; finalize the card text locally.
     setSessionBusy(persistKeyRef.current, false)
     setBusy(false)
+    setLiveStatus(tg('ai.cancelled'))
     setRunProgress(null)
     setPendingConfirm(null)
     setLines((prev) => {
@@ -2548,6 +2571,7 @@ export default function AIPanel({
         danger: true
       })
       if (!ok) return
+      setLiveStatus('')
       setLines([])
       setPendingConfirm(null)
       setWorkingGoal(null)
@@ -2587,6 +2611,7 @@ export default function AIPanel({
     }
     void (async () => {
       const archived = await archiveCurrent()
+      setLiveStatus('')
       setLines([])
       setPendingConfirm(null)
       setWorkingGoal(null)
@@ -3122,7 +3147,7 @@ export default function AIPanel({
             ) : null}
           </div>
           {busy ? (
-            <span className="ai-busy-chip" data-testid="ai-busy-chip" role="status" aria-live="polite">
+            <span className="ai-busy-chip" data-testid="ai-busy-chip">
               {tg('ai.busy')}
             </span>
           ) : null}
@@ -3400,8 +3425,8 @@ export default function AIPanel({
         data-chat-ui="cursor"
         ref={messagesRef}
         role="log"
-        aria-live="polite"
-        aria-relevant="additions text"
+        aria-label={tg('ai.transcript')}
+        aria-live="off"
         aria-busy={busy || undefined}
         onScroll={() => {
           const el = messagesRef.current
@@ -3865,7 +3890,7 @@ export default function AIPanel({
                         </button>
                       ) : null}
                     </div>
-                    <code className="ai-reply-cmd-code">{s.command}</code>
+                    <code className="ai-reply-cmd-code"><CommandText command={s.command!} /></code>
                     {commandActions({
                       command: s.command,
                       riskLevel: s.riskLevel,
@@ -4068,6 +4093,16 @@ export default function AIPanel({
         </div>
       ) : null}
 
+      <div
+        className="sr-only"
+        data-testid="ai-live-status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {liveStatus}
+      </div>
+
       <div className="ai-input-row">
         <div className="ai-composer" data-testid="ai-composer">
           {pasteBlocks.length ? (
@@ -4102,7 +4137,12 @@ export default function AIPanel({
               ))}
             </div>
           ) : null}
+          <label className="sr-only" htmlFor={composerInputId}>
+            {tg('ai.inputLabel')}
+          </label>
           <textarea
+            id={composerInputId}
+            rows={1}
             ref={inputRef}
             value={input}
             onChange={(e) => {

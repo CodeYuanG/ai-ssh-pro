@@ -8,7 +8,7 @@ assert.ok(panel.includes("data-chat-ui=\"cursor\""))
 assert.ok(panel.includes('ChatMarkdown'))
 assert.ok(panel.includes('ai-turn--'))
 assert.ok(panel.includes('ai.roleYou') && panel.includes('ai.roleAssistant'))
-assert.ok(panel.includes('e.isComposing'))
+assert.ok(panel.includes('e.nativeEvent.isComposing') && panel.includes('e.keyCode === 229'), 'IME composition and legacy key code guard Enter submission')
 
 const md = readFileSync('src/renderer/src/components/ChatMarkdown.tsx', 'utf8')
 assert.ok(md.includes('react-markdown') && md.includes('remarkGfm'))

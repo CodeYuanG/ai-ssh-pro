@@ -2948,6 +2948,10 @@ button.statusbar-slot:focus-visible {
   max-width: 100%;
 }
 
+.ai-reply-cmd-token {
+  white-space: nowrap;
+}
+
 .ai-reply-actions {
   display: flex;
   flex-wrap: nowrap;
@@ -5947,7 +5951,8 @@ button.primary.danger:focus-visible {
 .ai-dark-card .ai-reply-cmd-code {
   font-family: var(--font-mono);
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 
@@ -8709,7 +8714,11 @@ body.platform-darwin .window-controls {
 }
 
 .ai-panel .ai-input-row .ai-composer textarea {
+  height: auto;
   min-height: 64px;
+  max-height: 160px;
+  overflow-y: auto;
+  field-sizing: content;
   font-size: 14px;
   line-height: 1.5;
   padding-top: 10px;
